@@ -1,4 +1,4 @@
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, syntaxHighlighting, type TagStyle } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import { tags } from '@lezer/highlight';
 
@@ -156,20 +156,35 @@ export function aplicarTema(
   }
 }
 
+/**
+ * Especificacoes do realce do editor, separadas para poderem ser conferidas em teste.
+ *
+ * `tags.list` NAO entra de proposito. No @lezer/markdown o mapa e
+ * `"OrderedList/... BulletList/...": tags.list`, e o sufixo `/...` faz a etiqueta
+ * valer para TODOS os descendentes da lista — texto incluido. Pintar essa etiqueta
+ * deixava cada linha iniciada por `-` inteiramente da cor do marcador, e como as
+ * notas sao quase so lista, o documento inteiro ficava de uma cor so, apagando a
+ * diferenca entre italico, negrito e texto comum.
+ *
+ * O marcador de verdade (`-`, `#`, `>`, `**`, crase) e `tags.processingInstruction`,
+ * e fica discreto para que enfase e negrito se destaquem.
+ */
+export function especificacoesRealce(paleta: PaletaMarkdown): TagStyle[] {
+  return [
+    { tag: tags.heading1, color: paleta.h1 },
+    { tag: tags.heading2, color: paleta.h2 },
+    { tag: tags.heading3, color: paleta.h3 },
+    { tag: [tags.heading4, tags.heading5, tags.heading6], color: paleta.h4 },
+    { tag: tags.emphasis, color: paleta.emphasis, fontStyle: 'italic' },
+    { tag: tags.strong, color: paleta.emphasis2, fontWeight: 'bold' },
+    { tag: tags.monospace, color: paleta.code, backgroundColor: paleta.codeBackground },
+    { tag: tags.quote, color: paleta.quote },
+    { tag: tags.processingInstruction, color: paleta.quote },
+    { tag: [tags.link, tags.url], color: paleta.link, textDecoration: 'underline' },
+  ];
+}
+
 export function realceMarkdown(paleta: PaletaMarkdown | null): Extension {
   if (!paleta) return [];
-  return syntaxHighlighting(
-    HighlightStyle.define([
-      { tag: tags.heading1, color: paleta.h1 },
-      { tag: tags.heading2, color: paleta.h2 },
-      { tag: tags.heading3, color: paleta.h3 },
-      { tag: [tags.heading4, tags.heading5, tags.heading6], color: paleta.h4 },
-      { tag: tags.emphasis, color: paleta.emphasis, fontStyle: 'italic' },
-      { tag: tags.strong, color: paleta.emphasis2, fontWeight: 'bold' },
-      { tag: tags.monospace, color: paleta.code, backgroundColor: paleta.codeBackground },
-      { tag: tags.quote, color: paleta.quote },
-      { tag: tags.list, color: paleta.listMarker },
-      { tag: [tags.link, tags.url], color: paleta.link, textDecoration: 'underline' },
-    ]),
-  );
+  return syntaxHighlighting(HighlightStyle.define(especificacoesRealce(paleta)));
 }

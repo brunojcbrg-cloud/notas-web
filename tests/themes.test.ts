@@ -5,8 +5,10 @@ import {
   guardarPreferenciaTema,
   lerPreferenciaTema,
   PALETAS_MARKDOWN,
+  especificacoesRealce,
   type ArmazenamentoTema,
 } from '../src/themes';
+import { tags } from '@lezer/highlight';
 
 describe('casos 35–37 · paletas copiadas e preferência', () => {
   it('35. compara valor a valor as 13 cores OBSIDIAN claras e escuras do Kotlin', () => {
@@ -86,5 +88,28 @@ describe('casos 35–37 · paletas copiadas e preferência', () => {
     guardarPreferenciaTema(storage, { tema: 'solarized', modo: 'dark' });
     expect(dados.has(CHAVE_TEMA)).toBe(true);
     expect(lerPreferenciaTema(storage)).toEqual({ tema: 'solarized', modo: 'dark' });
+  });
+});
+
+describe('caso 70 · realce nao inunda o texto com a cor do marcador', () => {
+  it('70. tags.list fica de fora e italico, negrito e marcador tem cores distintas', () => {
+    const paleta = PALETAS_MARKDOWN.obsidian.light;
+    const especificacoes = especificacoesRealce(paleta);
+    const etiquetas = especificacoes.flatMap((e) => (Array.isArray(e.tag) ? e.tag : [e.tag]));
+
+    // "OrderedList/... BulletList/..." aplica tags.list a TODOS os descendentes:
+    // pintar essa etiqueta deixava cada linha de lista inteira de uma cor so.
+    expect(etiquetas).not.toContain(tags.list);
+    expect(etiquetas).toContain(tags.processingInstruction);
+
+    const cor = (alvo: (typeof tags)[keyof typeof tags]): string | undefined =>
+      especificacoes.find((e) => (Array.isArray(e.tag) ? e.tag : [e.tag]).includes(alvo))?.color;
+
+    const italico = cor(tags.emphasis);
+    const negrito = cor(tags.strong);
+    const marcador = cor(tags.processingInstruction);
+    expect(italico).toBe(paleta.emphasis);
+    expect(negrito).toBe(paleta.emphasis2);
+    expect(new Set([italico, negrito, marcador]).size).toBe(3);
   });
 });
