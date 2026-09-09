@@ -113,3 +113,16 @@ describe('caso 70 · realce nao inunda o texto com a cor do marcador', () => {
     expect(new Set([italico, negrito, marcador]).size).toBe(3);
   });
 });
+
+describe('caso 80 · cores por nível de cabeçalho', () => {
+  it('80. heading1, heading2 e heading3 usam três valores distintos da paleta', () => {
+    const paleta = PALETAS_MARKDOWN.obsidian.light;
+    const especificacoes = especificacoesRealce(paleta);
+    const cor = (alvo: (typeof tags)[keyof typeof tags]): string | undefined =>
+      especificacoes.find((e) => (Array.isArray(e.tag) ? e.tag : [e.tag]).includes(alvo))?.color;
+
+    const cores = [cor(tags.heading1), cor(tags.heading2), cor(tags.heading3)];
+    expect(cores).toEqual([paleta.h1, paleta.h2, paleta.h3]);
+    expect(new Set(cores).size).toBe(3);
+  });
+});

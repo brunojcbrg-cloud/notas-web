@@ -18,6 +18,7 @@ import {
   EditorView,
   ViewPlugin,
   type ViewUpdate,
+  WidgetType,
 } from '@codemirror/view';
 
 const MARCAS_DISCRETAS = new Set([
@@ -26,8 +27,46 @@ const MARCAS_DISCRETAS = new Set([
   'CodeMark',
   'QuoteMark',
   'LinkMark',
-  'ListMark',
 ]);
+
+const BOLINHAS = ['•', '◦', '▪'] as const;
+
+type NoSintatico = {
+  name: string;
+  parent: NoSintatico | null;
+};
+
+function contextoDeLista(no: NoSintatico): { nivel: number; tipo: string | null } {
+  let ancestral = no.parent;
+  let nivel = 0;
+  let tipo: string | null = null;
+  while (ancestral) {
+    if (ancestral.name === 'BulletList' || ancestral.name === 'OrderedList') {
+      tipo ??= ancestral.name;
+      nivel += 1;
+    }
+    ancestral = ancestral.parent;
+  }
+  return { nivel: Math.min(6, Math.max(1, nivel)), tipo };
+}
+
+class BolinhaLista extends WidgetType {
+  constructor(readonly nivel: number) {
+    super();
+  }
+
+  eq(outro: BolinhaLista): boolean {
+    return outro.nivel === this.nivel;
+  }
+
+  toDOM(): HTMLElement {
+    const elemento = document.createElement('span');
+    elemento.className = `cm-lp-bolinha cm-lp-bolinha-n${this.nivel}`;
+    elemento.textContent = BOLINHAS[(this.nivel - 1) % BOLINHAS.length];
+    elemento.setAttribute('aria-hidden', 'true');
+    return elemento;
+  }
+}
 
 const CLASSES: Record<string, string> = {
   StrongEmphasis: 'cm-lp-forte',
@@ -47,6 +86,7 @@ export function livePreview(): Extension {
       update(atualizacao: ViewUpdate): void {
         if (
           atualizacao.docChanged ||
+          atualizacao.selectionSet ||
           atualizacao.viewportChanged ||
           syntaxTree(atualizacao.startState) !== syntaxTree(atualizacao.state)
         ) {
@@ -93,9 +133,25 @@ export function livePreview(): Extension {
               }
 
               if (no.name === 'ListItem') {
-                const coluna = no.from - linha.from;
-                const nivel = Math.min(6, Math.floor(coluna / 2) + 1);
+                const { nivel } = contextoDeLista(no.node);
                 nivelDeLista.set(linha.from, Math.max(nivelDeLista.get(linha.from) ?? 0, nivel));
+                return undefined;
+              }
+
+              if (no.name === 'ListMark') {
+                const { nivel, tipo } = contextoDeLista(no.node);
+                const linhaTocada = state.selection.ranges.some(
+                  (selecao) => selecao.from <= linha.to && selecao.to >= linha.from,
+                );
+                if (tipo === 'BulletList' && !linhaTocada) {
+                  ranges.push(
+                    Decoration.replace({ widget: new BolinhaLista(nivel) }).range(no.from, no.to),
+                  );
+                } else {
+                  ranges.push(
+                    Decoration.mark({ class: 'cm-lp-marcador' }).range(no.from, no.to),
+                  );
+                }
                 return undefined;
               }
 

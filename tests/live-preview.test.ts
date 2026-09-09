@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
 import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -104,5 +105,122 @@ describe('casos 61–65 · live preview sem edição implícita', () => {
     expect(document.querySelector('.cm-content')?.textContent).toContain('# Título');
     expect(document.querySelector('.cm-content')?.textContent).toContain('**forte**');
     expect(document.querySelector('[class*="cm-lp-"]')).toBeNull();
+  });
+});
+
+describe('casos 71–79 · marcadores de lista no live preview', () => {
+  it('71. salvar sem editar preserva os bytes mesmo com marcador substituído', () => {
+    const original = '- item\r\nlinha intacta\r\n';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'crlf', preview, true);
+    editor.dispatch({ selection: { anchor: editor.state.doc.length } });
+
+    expect(document.querySelector('.cm-lp-bolinha')).not.toBeNull();
+    expect(new TextEncoder().encode(textoExato(editor.state))).toEqual(
+      new TextEncoder().encode(original),
+    );
+  });
+
+  it('72. hífen vira bolinha quando o cursor está em outra linha', () => {
+    const original = '- item\noutra linha';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'lf', preview, true);
+    editor.dispatch({ selection: { anchor: original.indexOf('outra') } });
+
+    expect(document.querySelector('.cm-lp-bolinha')?.textContent).toBe('•');
+    expect(document.querySelector('.cm-content')?.textContent).toContain('• item');
+    expect(editor.state.doc.toString()).toBe(original);
+  });
+
+  it('73. cursor na linha mantém o hífen cru, visível e editável', () => {
+    const preview = new Compartment();
+    const editor = criarEditor('- item\noutra linha', 'lf', preview, true);
+
+    expect(document.querySelector('.cm-lp-bolinha')).toBeNull();
+    expect(document.querySelector('.cm-content')?.textContent).toContain('- item');
+    expect(document.querySelector('.cm-lp-marcador')?.textContent).toBe('-');
+  });
+
+  it('74. seleção que atravessa a linha mantém o hífen cru', () => {
+    const original = 'antes\n- item\ndepois';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'lf', preview, true);
+    editor.dispatch({
+      selection: { anchor: original.indexOf('antes') + 2, head: original.indexOf('depois') + 2 },
+    });
+
+    expect(document.querySelector('.cm-lp-bolinha')).toBeNull();
+    expect(document.querySelector('.cm-content')?.textContent).toContain('- item');
+  });
+
+  it('75. três níveis usam a árvore para bolinha e recuo crescentes', () => {
+    const original = '- um\n  - dois\n    - três\nfim';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'lf', preview, true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+
+    const bolinhas = [...document.querySelectorAll<HTMLElement>('.cm-lp-bolinha')];
+    expect(bolinhas.map((elemento) => elemento.textContent)).toEqual(['•', '◦', '▪']);
+    expect(bolinhas.map((elemento) => elemento.classList.item(1))).toEqual([
+      'cm-lp-bolinha-n1',
+      'cm-lp-bolinha-n2',
+      'cm-lp-bolinha-n3',
+    ]);
+    const linhas = [...document.querySelectorAll<HTMLElement>('.cm-line.cm-lp-lista')];
+    expect(linhas.map((linha) => linha.style.getPropertyValue('--nivel').trim())).toEqual([
+      '1',
+      '2',
+      '3',
+    ]);
+    const css = readFileSync('src/style.css', 'utf8');
+    expect(css).toContain(
+      'padding-left: calc(0.45em + (var(--nivel) - 1) * 0.75em)',
+    );
+  });
+
+  it('76. lista ordenada preserva o número e não cria bolinha', () => {
+    const original = '1. primeiro\nfim';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'lf', preview, true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+
+    expect(document.querySelector('.cm-lp-bolinha')).toBeNull();
+    expect(document.querySelector('.cm-content')?.textContent).toContain('1. primeiro');
+    expect(document.querySelector('.cm-lp-marcador')?.textContent).toBe('1.');
+  });
+
+  it('77. hífen dentro de bloco de código fica intocado', () => {
+    const original = '```\n- código\n```\nfim';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'lf', preview, true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+
+    expect(document.querySelector('.cm-lp-bolinha')).toBeNull();
+    expect(document.querySelector('.cm-content')?.textContent).toContain('- código');
+    expect(editor.state.doc.toString()).toBe(original);
+  });
+
+  it('78. apagar o hífen na linha ativa produz parágrafo comum coerente', () => {
+    const preview = new Compartment();
+    const editor = criarEditor('- item\nfim', 'lf', preview, true);
+    editor.dispatch({ changes: { from: 0, to: 1, insert: '' } });
+
+    expect(editor.state.doc.toString()).toBe(' item\nfim');
+    expect(document.querySelector('.cm-lp-bolinha')).toBeNull();
+    expect(document.querySelector('.cm-lp-marcador')).toBeNull();
+    expect(document.querySelector('.cm-content')?.textContent).toContain(' item');
+  });
+
+  it('79. nota CRLF editada no modo ao vivo continua CRLF', () => {
+    const original = '- um\r\n- dois\r\nfim\r\n';
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'crlf', preview, true);
+    const inicio = editor.state.doc.toString().indexOf('dois');
+    editor.dispatch({
+      selection: { anchor: inicio },
+      changes: { from: inicio, to: inicio + 4, insert: 'DOIS' },
+    });
+
+    expect(textoExato(editor.state)).toBe('- um\r\n- DOIS\r\nfim\r\n');
   });
 });

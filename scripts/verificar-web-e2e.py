@@ -1,3 +1,5 @@
+# Execute com: py -3.14 scripts/verificar-web-e2e.py
+# O Python do PATH não contém o Playwright usado por esta certificação.
 # -*- coding: utf-8 -*-
 """Casos 66 e 67: entrada no Edge real e token inválido sem erro JavaScript.
 

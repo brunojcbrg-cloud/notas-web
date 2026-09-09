@@ -80,3 +80,41 @@ describe('casos 68–69 · certificação da suíte', () => {
     expect(reporter).toContain('carregados !== emDisco');
   });
 });
+
+describe('casos 81–82 · não regressão e auditoria final', () => {
+  it('81. casos 1–70 continuam presentes nas suítes e na certificação Edge', () => {
+    const diretorio = new URL('.', import.meta.url);
+    const fontes = readdirSync(diretorio)
+      .filter((nome) => nome.endsWith('.test.ts'))
+      .map((nome) => readFileSync(new URL(nome, diretorio), 'utf8'));
+    fontes.push(
+      readFileSync(new URL('../scripts/verificar-web-e2e.py', import.meta.url), 'utf8'),
+    );
+    const fonteCompleta = fontes.join('\n');
+    for (let caso = 1; caso <= 70; caso += 1) {
+      expect(fonteCompleta).toMatch(new RegExp(`\\b${caso}\\.`));
+    }
+  });
+
+  it('82. npm test audita os arquivos no disco e exige Errors zero', () => {
+    const arquivos = readdirSync(new URL('.', import.meta.url)).filter((nome) =>
+      nome.endsWith('.test.ts'),
+    );
+    const config = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
+    const reporter = readFileSync(
+      new URL('../scripts/test-audit-reporter.mjs', import.meta.url),
+      'utf8',
+    );
+    const certificacao = readFileSync(
+      new URL('../scripts/verificar-web-e2e.py', import.meta.url),
+      'utf8',
+    );
+
+    expect(arquivos).toHaveLength(9);
+    expect(config).toContain("include: ['tests/**/*.test.ts']");
+    expect(reporter).toContain('Test Files ${carregados} loaded (${emDisco} on disk)');
+    expect(reporter).toContain('Errors     ${erros.length} errors');
+    expect(reporter).toContain('erros.length !== 0');
+    expect(certificacao.startsWith('# Execute com: py -3.14 ')).toBe(true);
+  });
+});
