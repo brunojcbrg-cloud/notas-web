@@ -9,5 +9,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    reporters: ['default', './scripts/test-audit-reporter.mjs'],
   },
 });

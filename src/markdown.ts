@@ -90,10 +90,12 @@ function regraWikilink(state: StateInline, silent: boolean): boolean {
   if (fim < 0) return false;
   const bruto = src.slice(i + 2, fim);
   if (!bruto.trim() || bruto.includes('\n') || bruto.includes('[')) return false;
+  const alvo = analisarAlvo(bruto, embed);
+  if (!alvo.alvo && !alvo.secao) return false;
   if (!silent) {
     const token = state.push('wikilink', '', 0);
     token.content = bruto;
-    token.meta = analisarAlvo(bruto, embed);
+    token.meta = alvo;
   }
   state.pos = fim + 2;
   return true;
@@ -131,7 +133,11 @@ function criarMarkdown(ctx: ContextoMarkdown): MarkdownIt {
   md.renderer.rules.wikilink = (tokens, indice) => {
     const alvo = tokens[indice].meta as AlvoWikilink;
     if (alvo.embed) return escapar(`![[${alvo.bruto}]]`);
-    const destino = resolverWikilink(ctx.caminhos ?? [], ctx.caminhoAtual ?? '', alvo.alvo);
+    const destino = alvo.alvo
+      ? resolverWikilink(ctx.caminhos ?? [], ctx.caminhoAtual ?? '', alvo.alvo)
+      : alvo.secao
+        ? ctx.caminhoAtual ?? null
+        : null;
     const classe = destino ? 'nota-link-existente' : 'nota-link-faltante';
     const atributoDestino = destino ? ` data-caminho="${escapar(destino)}"` : '';
     return `<a class="nota-link ${classe}" href="#" data-alvo="${escapar(

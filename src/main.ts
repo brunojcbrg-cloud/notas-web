@@ -16,6 +16,7 @@ import {
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
+import { configurarLivePreview, livePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { guardarToken, lerToken, sair } from './session';
 import {
@@ -44,6 +45,7 @@ if (!raiz) throw new Error('Contêiner principal ausente.');
 
 const midiaEscura = window.matchMedia('(prefers-color-scheme: dark)');
 const compartimentoTema = new Compartment();
+const compartimentoPreview = new Compartment();
 let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
 let caminhos: string[] = [];
@@ -270,7 +272,7 @@ function mostrarEntrada(mensagem = ''): void {
 async function abrirNota(
   caminho: string,
   secao = '',
-  modoInicial: 'fonte' | 'leitura' = 'fonte',
+  modoInicial: 'fonte' | 'preview' | 'leitura' = 'fonte',
   retorno = pastaAtual,
 ): Promise<void> {
   if (!token) return mostrarEntrada();
@@ -469,7 +471,7 @@ function mostrarCriacao(): void {
 }
 
 function mostrarNota(
-  modoInicial: 'fonte' | 'leitura' = 'fonte',
+  modoInicial: 'fonte' | 'preview' | 'leitura' = 'fonte',
   secao = '',
   textoBaseSalvo?: string,
 ): void {
@@ -490,9 +492,10 @@ function mostrarNota(
   const barra = elemento('section', 'barra-nota');
   const modos = elemento('div', 'modos');
   const fonte = elemento('button', 'modo ativo', 'Fonte');
+  const preview = elemento('button', 'modo', 'Ao vivo');
   const leitura = elemento('button', 'modo', 'Leitura');
-  fonte.type = leitura.type = 'button';
-  modos.append(fonte, leitura);
+  fonte.type = preview.type = leitura.type = 'button';
+  modos.append(fonte, preview, leitura);
   const direita = elemento('div', 'acoes-nota');
   const estado = elemento('span', 'estado-salvo', 'Salvo');
   const salvar = elemento('button', 'botao botao-primario', 'Salvar');
@@ -533,6 +536,7 @@ function mostrarNota(
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     preservarQuebras(nota.texto, nota.eol),
     compartimentoTema.of(realceMarkdown(paletaEfetiva(preferenciaTema, sistemaEscuro()))),
+    compartimentoPreview.of(modoInicial === 'preview' ? livePreview() : []),
     EditorView.lineWrapping,
     EditorView.updateListener.of((atualizacao) => {
       if (atualizacao.docChanged) atualizarEstado();
@@ -558,11 +562,21 @@ function mostrarNota(
         });
   atualizarEstado();
 
+  const marcarModo = (ativo: HTMLButtonElement): void => {
+    for (const botao of [fonte, preview, leitura]) botao.classList.toggle('ativo', botao === ativo);
+  };
   const ativarFonte = (): void => {
+    if (editor) configurarLivePreview(editor, compartimentoPreview, false);
     editorHost.hidden = false;
     leituraHost.hidden = true;
-    fonte.classList.add('ativo');
-    leitura.classList.remove('ativo');
+    marcarModo(fonte);
+    editor?.focus();
+  };
+  const ativarPreview = (): void => {
+    if (editor) configurarLivePreview(editor, compartimentoPreview, true);
+    editorHost.hidden = false;
+    leituraHost.hidden = true;
+    marcarModo(preview);
     editor?.focus();
   };
   const ativarLeitura = (secaoAlvo = ''): void => {
@@ -572,8 +586,7 @@ function mostrarNota(
       leituraHost.innerHTML = renderizarMarkdown(texto, { caminhos, caminhoAtual: nota.caminho });
       editorHost.hidden = true;
       leituraHost.hidden = false;
-      leitura.classList.add('ativo');
-      fonte.classList.remove('ativo');
+      marcarModo(leitura);
       if (secaoAlvo) {
         requestAnimationFrame(() => {
           if (!rolarParaSecao(leituraHost, texto, secaoAlvo)) {
@@ -586,6 +599,7 @@ function mostrarNota(
     }
   };
   fonte.addEventListener('click', ativarFonte);
+  preview.addEventListener('click', ativarPreview);
   leitura.addEventListener('click', () => ativarLeitura());
   leituraHost.addEventListener('click', (evento) => {
     const alvoEvento = evento.target;
@@ -596,6 +610,18 @@ function mostrarNota(
     const acao = acaoWikilink(link.dataset.caminho ?? null, link.dataset.secao ?? '');
     if (acao.tipo === 'faltante') {
       window.alert(`Nota não encontrada: ${link.dataset.alvo ?? link.textContent ?? ''}`);
+      return;
+    }
+    if (acao.caminho === nota?.caminho && acao.secao) {
+      if (!editor) return;
+      try {
+        const texto = textoExato(editor.state);
+        if (!rolarParaSecao(leituraHost, texto, acao.secao)) {
+          window.alert(`Seção não encontrada: ${acao.secao}`);
+        }
+      } catch (erro) {
+        window.alert(erroSeguro(erro));
+      }
       return;
     }
     if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
@@ -625,6 +651,7 @@ function mostrarNota(
   });
 
   if (modoInicial === 'leitura') ativarLeitura(secao);
+  else if (modoInicial === 'preview') ativarPreview();
 }
 
 function oferecerRascunho(): void {

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   acaoWikilink,
@@ -115,5 +117,83 @@ describe('casos 38–42 · renderização', () => {
     const raiz = corpo(html);
     expect(raiz.querySelector('script')).toBeNull();
     expect(raiz.textContent).toBe('seguro');
+  });
+});
+
+describe('casos 52–57 · seções da própria nota', () => {
+  it('52. [[#Seção]] navega na nota atual, não para alvo faltante', () => {
+    const raiz = corpo(renderizarMarkdown('[[#Seção]]', { caminhos, caminhoAtual: atual }));
+    const link = raiz.querySelector<HTMLAnchorElement>('a.nota-link');
+    expect(link?.classList.contains('nota-link-existente')).toBe(true);
+    expect(link?.dataset.caminho).toBe(atual);
+    expect(acaoWikilink(link?.dataset.caminho ?? null, link?.dataset.secao ?? '')).toEqual({
+      tipo: 'navegar',
+      caminho: atual,
+      secao: 'Seção',
+    });
+  });
+
+  it('53. [[#Seção|apelido]] navega na nota atual e mostra o apelido', () => {
+    const raiz = corpo(
+      renderizarMarkdown('[[#Seção|atalho]]', { caminhos, caminhoAtual: atual }),
+    );
+    const link = raiz.querySelector<HTMLAnchorElement>('a.nota-link');
+    expect(link?.textContent).toBe('atalho');
+    expect(link?.dataset.caminho).toBe(atual);
+    expect(link?.dataset.secao).toBe('Seção');
+  });
+
+  it('54. [[Nota#Seção]] continua navegando para a outra nota', () => {
+    const raiz = corpo(
+      renderizarMarkdown('[[Nota#Seção]]', { caminhos, caminhoAtual: atual }),
+    );
+    const link = raiz.querySelector<HTMLAnchorElement>('a.nota-link');
+    expect(link?.dataset.caminho).toBe('06_Conhecimento/Medicina/Nota.md');
+    expect(link?.dataset.secao).toBe('Seção');
+  });
+
+  it('55. [[]] e [[#]] permanecem texto cru, sem link', () => {
+    const raiz = corpo(renderizarMarkdown('[[]]\n[[#]]', { caminhos, caminhoAtual: atual }));
+    expect(raiz.querySelector('a')).toBeNull();
+    expect(raiz.textContent).toContain('[[]]');
+    expect(raiz.textContent).toContain('[[#]]');
+  });
+
+  it('56. os 20 primeiros links do índice real de Semiologia resolvem na nota atual', () => {
+    const indice = [
+      '[[#Revisão sistemática]]',
+      '[[#Inspeção|Inspeção]]',
+      '[[#Palpação|Palpação]]',
+      '[[#Percussão|Percussão]]',
+      '[[#Ausculta|Ausculta]]',
+      '[[#Sequência completa exame|sequência completa do exame]]',
+      '[[#Sintomas principais|Sintomas principais]]',
+      '[[#Roteiro de Caracterização de sintomas|Roteiro de Caracterização de sintomas]]',
+      '[[#Anamnese dirigida|Anamnese Dirigida]]',
+      '[[#Red Flags na anamnese de cabeça e pescoço|Red Flags na anamnese de cabeça e pescoço]]',
+      '[[#Semiologia do crânio e Couro Cabeludo|Semiologia do crânio e Couro Cabeludo]]',
+      '[[#Semiologia da Face|Semiologia da Face]]',
+      '[[#Semiologia Ocular e Estruturas Oculares.|Semiologia Ocular e Estruturas Oculares.]]',
+      '[[#Semiologia do Nariz e Seios Paranasais|Semiologia do Nariz e Seios Paranasais]]',
+      '[[#Cavidade Oral|Cavidade Oral]]',
+      '[[#Glândulas salivares|Glândulas salivares]]',
+      '[[#Semiologia do Ouvido|Semiologia do Ouvido]]',
+      '[[#Semiologia da ATM|Semiologia da ATM]]',
+      '[[#Semiologia da Tireoide|Semiologia da Tireoide]]',
+      '[[#Semiologia dos Linfonodos Cervicais e Cadeias Ganglionares|Semiologia dos Linfonodos Cervicais e Cadeias Ganglionares]]',
+    ].join('\n');
+    const raiz = corpo(renderizarMarkdown(indice, { caminhos, caminhoAtual: atual }));
+    const links = [...raiz.querySelectorAll<HTMLAnchorElement>('a.nota-link')];
+    expect(links).toHaveLength(20);
+    expect(links.every((link) => link.dataset.caminho === atual)).toBe(true);
+    expect(links.some((link) => link.classList.contains('nota-link-faltante'))).toBe(false);
+  });
+
+  it('57. wikilink não recebe sublinhado em nenhum estado', () => {
+    const html = renderizarMarkdown('[[Nota]] [[Ausente]]', { caminhos, caminhoAtual: atual });
+    expect(html).not.toContain('text-decoration');
+    const css = readFileSync(join(process.cwd(), 'src', 'style.css'), 'utf8');
+    expect(css).toMatch(/\.nota-link\s*\{[^}]*text-decoration:\s*none/);
+    expect(css).not.toMatch(/\.nota-link[^}]*text-decoration-(?:style|line)/);
   });
 });

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { EditorState } from '@codemirror/state';
 import { describe, expect, it, vi } from 'vitest';
 import { codificarEstado, decodificarBase64 } from '../src/bytes';
@@ -52,5 +52,31 @@ describe('casos 48–50 · não regressão', () => {
       ),
     ).rejects.toBeInstanceOf(ConflitoGitHub);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('casos 68–69 · certificação da suíte', () => {
+  it('68. casos 1–51 continuam presentes e executados pela mesma suíte', () => {
+    const diretorio = new URL('.', import.meta.url);
+    const fontes = readdirSync(diretorio)
+      .filter((nome) => nome.endsWith('.test.ts'))
+      .map((nome) => readFileSync(new URL(nome, diretorio), 'utf8'))
+      .join('\n');
+    for (let caso = 1; caso <= 51; caso += 1) expect(fontes).toContain(`'${caso}.`);
+  });
+
+  it('69. npm test audita todos os arquivos e imprime Errors zero', () => {
+    const arquivos = readdirSync(new URL('.', import.meta.url)).filter((nome) =>
+      nome.endsWith('.test.ts'),
+    );
+    const config = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
+    const reporter = readFileSync(
+      new URL('../scripts/test-audit-reporter.mjs', import.meta.url),
+      'utf8',
+    );
+    expect(arquivos).toHaveLength(9);
+    expect(config).toContain("'./scripts/test-audit-reporter.mjs'");
+    expect(reporter).toContain('Errors     ${erros.length} errors');
+    expect(reporter).toContain('carregados !== emDisco');
   });
 });
