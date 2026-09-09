@@ -97,4 +97,46 @@ describe('casos 43–47 · bloqueio', () => {
     expect(storage.getItem(CHAVE_TOKEN)).toBeNull();
     expect(dados.size).toBe(0);
   });
+
+  // O relogio falso do vitest aceita qualquer dono; o navegador nao. Este caso
+  // reproduz a regra real: nativo chamado com receptor que nao seja o global
+  // lanca "Illegal invocation". Sem ele, o defeito passa verde e quebra no ar.
+  it('51. os agendadores padrao nao chamam o nativo com receptor errado', () => {
+    vi.useRealTimers();
+    const setOriginal = globalThis.setTimeout;
+    const clearOriginal = globalThis.clearTimeout;
+    const atrasos: number[] = [];
+    let cancelados = 0;
+    const exigirGlobal = (dono: unknown): void => {
+      if (dono !== undefined && dono !== globalThis) {
+        throw new TypeError('Illegal invocation');
+      }
+    };
+    globalThis.setTimeout = function (this: unknown, _acao: unknown, atraso: number) {
+      exigirGlobal(this);
+      atrasos.push(atraso);
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    } as unknown as typeof setTimeout;
+    globalThis.clearTimeout = function (this: unknown) {
+      exigirGlobal(this);
+      cancelados += 1;
+    } as unknown as typeof clearTimeout;
+
+    try {
+      const controlador = new BloqueioInatividade(() => {});
+      expect(() => controlador.iniciar()).not.toThrow();
+      expect(() => controlador.interagir()).not.toThrow();
+      expect(() => controlador.visibilidadeMudou(true)).not.toThrow();
+      expect(() => controlador.parar()).not.toThrow();
+      expect(atrasos).toEqual([
+        LIMITE_INATIVIDADE_MS,
+        LIMITE_INATIVIDADE_MS,
+        LIMITE_OCULTA_MS,
+      ]);
+      expect(cancelados).toBeGreaterThan(0);
+    } finally {
+      globalThis.setTimeout = setOriginal;
+      globalThis.clearTimeout = clearOriginal;
+    }
+  });
 });

@@ -12,8 +12,11 @@ export class BloqueioInatividade {
 
   constructor(
     private readonly aoTrancar: () => boolean | void,
-    private readonly agendar: Agendar = setTimeout,
-    private readonly cancelar: Cancelar = clearTimeout,
+    // Embrulhados de proposito: como propriedade de classe, `this.agendar(...)`
+    // chamaria o nativo tendo a instancia como dono, e o navegador recusa com
+    // "Illegal invocation". O relogio falso dos testes nao impoe essa regra.
+    private readonly agendar: Agendar = (acao, atraso) => setTimeout(acao, atraso),
+    private readonly cancelar: Cancelar = (id) => clearTimeout(id),
   ) {}
 
   iniciar(): void {
