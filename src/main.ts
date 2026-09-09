@@ -1,8 +1,7 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import MarkdownIt from 'markdown-it';
 import { codificarBase64, codificarEstado } from './bytes';
 import {
   CaminhoExistente,
@@ -15,20 +14,56 @@ import {
   salvarNota,
   type NotaRemota,
 } from './github';
+import { BloqueioInatividade, conectarBloqueio } from './lock';
+import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { guardarToken, lerToken, sair } from './session';
+import {
+  aplicarTema,
+  guardarPreferenciaTema,
+  lerPreferenciaTema,
+  paletaEfetiva,
+  realceMarkdown,
+  type ModoCor,
+  type TemaMarkdown,
+} from './themes';
+import {
+  construirArvore,
+  entradasDaPasta,
+  filtrarNotas,
+  nomeDaNota,
+  pastaDaNota,
+  trilhaDaPasta,
+  type ArvoreNotas,
+  type NotaArvore,
+} from './tree';
 import './style.css';
 
 const raiz = document.querySelector<HTMLDivElement>('#app') as HTMLDivElement;
 if (!raiz) throw new Error('Contêiner principal ausente.');
 
-const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
+const midiaEscura = window.matchMedia('(prefers-color-scheme: dark)');
+const compartimentoTema = new Compartment();
+let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
 let caminhos: string[] = [];
+let arvore: ArvoreNotas = construirArvore([]);
+let pastaAtual = '';
+let pastaRetorno = '';
 let nota: NotaRemota | null = null;
 let editor: EditorView | null = null;
 let estadoSalvo: EditorState | null = null;
+let textoSalvoAtual: string | null = null;
 let salvando = false;
+let pararBloqueio: (() => void) | null = null;
+
+interface RascunhoMemoria {
+  nota: NotaRemota;
+  texto: string;
+  pastaRetorno: string;
+}
+
+let rascunhoMemoria: RascunhoMemoria | null = null;
 
 function elemento<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -49,17 +84,84 @@ function erroSeguro(erro: unknown): string {
 function limpar(): void {
   editor?.destroy();
   editor = null;
+  estadoSalvo = null;
   raiz.replaceChildren();
+}
+
+function sistemaEscuro(): boolean {
+  return midiaEscura.matches;
+}
+
+function atualizarTema(): void {
+  aplicarTema(document.documentElement, preferenciaTema, sistemaEscuro());
+  if (editor) {
+    editor.dispatch({
+      effects: compartimentoTema.reconfigure(
+        realceMarkdown(paletaEfetiva(preferenciaTema, sistemaEscuro())),
+      ),
+    });
+  }
+}
+
+midiaEscura.addEventListener('change', atualizarTema);
+atualizarTema();
+
+function seletoresTema(): HTMLElement {
+  const grupo = elemento('div', 'tema-controles');
+  const tema = elemento('select', 'tema-seletor') as HTMLSelectElement;
+  tema.setAttribute('aria-label', 'Tema do Markdown');
+  for (const [valor, rotulo] of [
+    ['padrao', 'Padrão'],
+    ['obsidian', 'Obsidian'],
+    ['solarized', 'Solarized'],
+  ] as const) {
+    const opcao = elemento('option', '', rotulo);
+    opcao.value = valor;
+    tema.append(opcao);
+  }
+  tema.value = preferenciaTema.tema;
+
+  const modo = elemento('select', 'tema-seletor') as HTMLSelectElement;
+  modo.setAttribute('aria-label', 'Aparência clara ou escura');
+  for (const [valor, rotulo] of [
+    ['system', 'Sistema'],
+    ['light', 'Claro'],
+    ['dark', 'Escuro'],
+  ] as const) {
+    const opcao = elemento('option', '', rotulo);
+    opcao.value = valor;
+    modo.append(opcao);
+  }
+  modo.value = preferenciaTema.modo;
+
+  const guardar = (): void => {
+    preferenciaTema = { tema: tema.value as TemaMarkdown, modo: modo.value as ModoCor };
+    guardarPreferenciaTema(localStorage, preferenciaTema);
+    atualizarTema();
+  };
+  tema.addEventListener('change', guardar);
+  modo.addEventListener('change', guardar);
+  grupo.append(tema, modo);
+  return grupo;
+}
+
+function encerrarSessao(): void {
+  pararBloqueio?.();
+  pararBloqueio = null;
+  sair(sessionStorage);
+  token = null;
+  caminhos = [];
+  arvore = construirArvore([]);
+  nota = null;
 }
 
 function botaoSair(): HTMLButtonElement {
   const botao = elemento('button', 'botao botao-sutil', 'Sair');
   botao.type = 'button';
   botao.addEventListener('click', () => {
-    sair(sessionStorage);
-    token = null;
-    caminhos = [];
-    nota = null;
+    if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
+    rascunhoMemoria = null;
+    encerrarSessao();
     mostrarEntrada();
   });
   return botao;
@@ -70,8 +172,38 @@ function cabecalho(titulo: string, subtitulo?: string): HTMLElement {
   const marca = elemento('div', 'marca');
   marca.append(elemento('span', 'marca-sinal', '06'), elemento('strong', '', titulo));
   if (subtitulo) marca.append(elemento('span', 'caminho', subtitulo));
-  header.append(marca, botaoSair());
+  const acoes = elemento('div', 'cabecalho-acoes');
+  acoes.append(seletoresTema(), botaoSair());
+  header.append(marca, acoes);
   return header;
+}
+
+function capturarRascunho(): boolean {
+  if (!temAlteracoes() || !editor || !nota) return true;
+  try {
+    rascunhoMemoria = {
+      nota: { ...nota, texto: textoSalvoAtual ?? nota.texto },
+      texto: textoExato(editor.state),
+      pastaRetorno,
+    };
+    return true;
+  } catch (erro) {
+    window.alert(`A página não foi bloqueada porque não conseguiu preservar a edição: ${erroSeguro(erro)}`);
+    return false;
+  }
+}
+
+function trancarPorInatividade(): boolean {
+  if (!capturarRascunho()) return false;
+  encerrarSessao();
+  mostrarEntrada('Sessão bloqueada por inatividade. Entre novamente para continuar.');
+  return true;
+}
+
+function iniciarBloqueio(): void {
+  pararBloqueio?.();
+  const controlador = new BloqueioInatividade(trancarPorInatividade);
+  pararBloqueio = conectarBloqueio(controlador, window, document);
 }
 
 function mostrarEntrada(mensagem = ''): void {
@@ -108,10 +240,13 @@ function mostrarEntrada(mensagem = ''): void {
     status.hidden = true;
     try {
       caminhos = await listarNotas(valor);
+      arvore = construirArvore(caminhos);
       guardarToken(sessionStorage, valor);
       token = valor;
       input.value = '';
+      iniciarBloqueio();
       mostrarLista();
+      if (rascunhoMemoria) oferecerRascunho();
     } catch (erro) {
       status.textContent = erroSeguro(erro);
       status.hidden = false;
@@ -124,7 +259,7 @@ function mostrarEntrada(mensagem = ''): void {
     elemento(
       'p',
       'aviso-compartilhado',
-      'Máquina compartilhada: o token fica só nesta aba. Feche a aba ao terminar.',
+      'Máquina compartilhada: a sessão bloqueia após 15 minutos sem uso ou 5 minutos com a aba oculta.',
     ),
   );
   pagina.append(painel);
@@ -132,12 +267,18 @@ function mostrarEntrada(mensagem = ''): void {
   input.focus();
 }
 
-async function abrirNota(caminho: string): Promise<void> {
+async function abrirNota(
+  caminho: string,
+  secao = '',
+  modoInicial: 'fonte' | 'leitura' = 'fonte',
+  retorno = pastaAtual,
+): Promise<void> {
   if (!token) return mostrarEntrada();
+  pastaRetorno = retorno;
   mostrarCarregando(caminho);
   try {
     nota = await lerNota(token, caminho);
-    mostrarNota();
+    mostrarNota(modoInicial, secao);
   } catch (erro) {
     mostrarLista(erroSeguro(erro));
   }
@@ -153,28 +294,52 @@ function mostrarCarregando(caminho: string): void {
   raiz.append(pagina);
 }
 
-function nomeVisivel(caminho: string): string {
-  return caminho.slice(PASTA.length).replace(/\.md$/, '');
+function itemDeNota(item: NotaArvore, mostrarCaminho: boolean): HTMLButtonElement {
+  const botao = elemento('button', 'item-nota');
+  botao.type = 'button';
+  const texto = elemento('span', 'item-texto');
+  texto.append(elemento('span', 'item-nome', item.nome));
+  if (mostrarCaminho) texto.append(elemento('span', 'item-caminho', item.caminho));
+  botao.append(elemento('span', 'item-marca', 'MD'), texto, elemento('span', 'item-seta', '→'));
+  botao.addEventListener('click', () => void abrirNota(item.caminho, '', 'fonte', pastaAtual));
+  return botao;
 }
 
 function mostrarLista(mensagem = ''): void {
   limpar();
+  if (!arvore.pastas.has(pastaAtual)) pastaAtual = '';
+  const pasta = arvore.pastas.get(pastaAtual) ?? arvore.raiz;
   const pagina = elemento('main', 'app-shell');
-  pagina.append(cabecalho('Conhecimento', `${caminhos.length} notas`));
+  pagina.append(cabecalho('Conhecimento', `${arvore.notas.length} notas`));
   const corpo = elemento('section', 'lista-corpo');
   const topo = elemento('div', 'lista-topo');
   const titulos = elemento('div');
   titulos.append(
     elemento('p', 'sobretitulo', '06_CONHECIMENTO'),
-    elemento('h1', '', 'Escolha o que estudar'),
+    elemento('h1', '', pastaAtual ? pasta.nome : 'Escolha o que estudar'),
   );
   const nova = elemento('button', 'botao botao-primario', 'Nova nota');
   nova.type = 'button';
   nova.addEventListener('click', mostrarCriacao);
   topo.append(titulos, nova);
+
+  const trilha = elemento('nav', 'trilha');
+  trilha.setAttribute('aria-label', 'Pastas da nota');
+  for (const [indice, parte] of trilhaDaPasta(pastaAtual).entries()) {
+    if (indice > 0) trilha.append(elemento('span', 'trilha-separador', '/'));
+    const botao = elemento('button', 'trilha-item', parte.nome);
+    botao.type = 'button';
+    botao.disabled = parte.caminho === pastaAtual;
+    botao.addEventListener('click', () => {
+      pastaAtual = parte.caminho;
+      mostrarLista();
+    });
+    trilha.append(botao);
+  }
+
   const busca = elemento('input', 'campo busca') as HTMLInputElement;
   busca.type = 'search';
-  busca.placeholder = 'Filtrar pelo nome do arquivo';
+  busca.placeholder = 'Filtrar pelo nome em todas as pastas';
   busca.autocomplete = 'off';
   busca.setAttribute('aria-label', 'Filtrar notas por nome');
   const feedback = elemento('p', 'mensagem erro', mensagem);
@@ -183,30 +348,47 @@ function mostrarLista(mensagem = ''): void {
   const lista = elemento('div', 'lista-notas');
 
   const renderizar = (): void => {
-    const termo = busca.value.toLocaleLowerCase('pt-BR');
-    const filtrados = caminhos.filter((caminho) =>
-      nomeVisivel(caminho).toLocaleLowerCase('pt-BR').includes(termo),
-    );
-    contador.textContent = `${filtrados.length} ${filtrados.length === 1 ? 'nota' : 'notas'}`;
+    const termo = busca.value.trim();
     lista.replaceChildren();
-    if (filtrados.length === 0) {
-      lista.append(elemento('p', 'vazio', 'Nenhuma nota corresponde a esse nome.'));
+    if (termo) {
+      const resultados = filtrarNotas(arvore, termo);
+      contador.textContent = `${resultados.length} ${resultados.length === 1 ? 'resultado' : 'resultados'} em toda a árvore`;
+      if (resultados.length === 0) {
+        lista.append(elemento('p', 'vazio', 'Nenhuma nota corresponde a esse nome.'));
+        return;
+      }
+      for (const resultado of resultados) lista.append(itemDeNota(resultado, true));
       return;
     }
-    for (const caminho of filtrados) {
-      const item = elemento('button', 'item-nota');
+
+    const entradas = entradasDaPasta(arvore, pastaAtual);
+    contador.textContent = `${pasta.totalNotas} ${pasta.totalNotas === 1 ? 'nota' : 'notas'} nesta pasta e abaixo`;
+    if (entradas.length === 0) {
+      lista.append(elemento('p', 'vazio', 'Esta pasta ainda não tem notas.'));
+      return;
+    }
+    for (const entrada of entradas) {
+      if (entrada.tipo === 'nota') {
+        lista.append(itemDeNota(entrada, false));
+        continue;
+      }
+      const item = elemento('button', 'item-nota item-pasta');
       item.type = 'button';
-      item.append(
-        elemento('span', 'item-marca', 'MD'),
-        elemento('span', 'item-nome', nomeVisivel(caminho)),
-        elemento('span', 'item-seta', '→'),
+      const texto = elemento('span', 'item-texto');
+      texto.append(
+        elemento('span', 'item-nome', entrada.nome),
+        elemento('span', 'item-caminho', `${entrada.totalNotas} ${entrada.totalNotas === 1 ? 'nota' : 'notas'}`),
       );
-      item.addEventListener('click', () => void abrirNota(caminho));
+      item.append(elemento('span', 'item-marca', 'DIR'), texto, elemento('span', 'item-seta', '→'));
+      item.addEventListener('click', () => {
+        pastaAtual = entrada.caminho;
+        mostrarLista();
+      });
       lista.append(item);
     }
   };
   busca.addEventListener('input', renderizar);
-  corpo.append(topo, busca, feedback, contador, lista);
+  corpo.append(topo, trilha, busca, feedback, contador, lista);
   pagina.append(corpo);
   raiz.append(pagina);
   renderizar();
@@ -218,10 +400,11 @@ function mostrarCriacao(): void {
   const dialogo = elemento('dialog', 'dialogo');
   const form = elemento('form', 'dialogo-conteudo');
   form.method = 'dialog';
+  const destino = `${PASTA}${pastaAtual ? `${pastaAtual}/` : ''}`;
   form.append(
     elemento('p', 'sobretitulo', 'NOVA NOTA'),
     elemento('h2', '', 'Dê um nome ao arquivo'),
-    elemento('p', 'dialogo-texto', 'A nota será criada vazia dentro de 06_Conhecimento.'),
+    elemento('p', 'dialogo-texto', `Destino: ${destino}`),
   );
   const label = elemento('label', '', 'Nome da nota');
   label.htmlFor = 'nome-nota';
@@ -241,9 +424,14 @@ function mostrarCriacao(): void {
   form.append(label, input, erro, acoes);
   form.addEventListener('submit', async (evento) => {
     evento.preventDefault();
-    let nome = input.value;
+    let nome = input.value.trim();
+    if (nome.includes('/') || nome.includes('\\')) {
+      erro.textContent = 'Digite apenas o nome; a pasta já está preenchida.';
+      erro.hidden = false;
+      return;
+    }
     if (!nome.endsWith('.md')) nome += '.md';
-    const caminho = `${PASTA}${nome}`;
+    const caminho = `${destino}${nome}`;
     criar.disabled = true;
     criar.textContent = 'Criando…';
     try {
@@ -254,6 +442,7 @@ function mostrarCriacao(): void {
         caminhos,
       );
       caminhos = [...caminhos, caminho].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      arvore = construirArvore(caminhos);
       nota = {
         caminho,
         sha: resultado.sha,
@@ -262,11 +451,11 @@ function mostrarCriacao(): void {
         somenteLeitura: false,
         eol: 'lf',
       };
+      pastaRetorno = pastaAtual;
       dialogo.close();
       mostrarNota();
     } catch (falha) {
-      erro.textContent =
-        falha instanceof CaminhoExistente ? falha.message : erroSeguro(falha);
+      erro.textContent = falha instanceof CaminhoExistente ? falha.message : erroSeguro(falha);
       erro.hidden = false;
       criar.disabled = false;
       criar.textContent = 'Criar nota';
@@ -279,15 +468,20 @@ function mostrarCriacao(): void {
   input.focus();
 }
 
-function mostrarNota(): void {
+function mostrarNota(
+  modoInicial: 'fonte' | 'leitura' = 'fonte',
+  secao = '',
+  textoBaseSalvo?: string,
+): void {
   if (!nota || !token) return mostrarEntrada();
   limpar();
   const pagina = elemento('main', 'app-shell nota-shell');
   const header = cabecalho('Conhecimento', nota.caminho);
-  const voltar = elemento('button', 'botao botao-sutil', '← Lista');
+  const voltar = elemento('button', 'botao botao-sutil', '← Pasta');
   voltar.type = 'button';
   voltar.addEventListener('click', () => {
     if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
+    pastaAtual = pastaRetorno;
     mostrarLista();
   });
   header.insertBefore(voltar, header.firstChild);
@@ -338,6 +532,7 @@ function mostrarNota(): void {
     markdown(),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     preservarQuebras(nota.texto, nota.eol),
+    compartimentoTema.of(realceMarkdown(paletaEfetiva(preferenciaTema, sistemaEscuro()))),
     EditorView.lineWrapping,
     EditorView.updateListener.of((atualizacao) => {
       if (atualizacao.docChanged) atualizarEstado();
@@ -347,13 +542,21 @@ function mostrarNota(): void {
       '.cm-scroller': { overflow: 'auto' },
       '.cm-content': { padding: '24px 0 120px' },
       '.cm-line': { padding: '0 28px' },
-      '.cm-gutters': { backgroundColor: '#f8f5ee', border: 'none' },
+      '.cm-gutters': { backgroundColor: 'var(--folha-baixa)', border: 'none' },
     }),
   ];
   if (nota.somenteLeitura) extensoes.push(EditorView.editable.of(false));
   const estadoInicial = EditorState.create({ doc: nota.texto, extensions: extensoes });
   editor = new EditorView({ state: estadoInicial, parent: editorHost });
-  estadoSalvo = editor.state;
+  textoSalvoAtual = textoBaseSalvo ?? nota.texto;
+  estadoSalvo =
+    textoSalvoAtual === nota.texto
+      ? editor.state
+      : EditorState.create({
+          doc: textoSalvoAtual,
+          extensions: [preservarQuebras(textoSalvoAtual, nota.eol)],
+        });
+  atualizarEstado();
 
   const ativarFonte = (): void => {
     editorHost.hidden = false;
@@ -362,20 +565,42 @@ function mostrarNota(): void {
     leitura.classList.remove('ativo');
     editor?.focus();
   };
-  const ativarLeitura = (): void => {
-    if (!editor) return;
+  const ativarLeitura = (secaoAlvo = ''): void => {
+    if (!editor || !nota) return;
     try {
-      leituraHost.innerHTML = md.render(textoExato(editor.state));
+      const texto = textoExato(editor.state);
+      leituraHost.innerHTML = renderizarMarkdown(texto, { caminhos, caminhoAtual: nota.caminho });
       editorHost.hidden = true;
       leituraHost.hidden = false;
       leitura.classList.add('ativo');
       fonte.classList.remove('ativo');
+      if (secaoAlvo) {
+        requestAnimationFrame(() => {
+          if (!rolarParaSecao(leituraHost, texto, secaoAlvo)) {
+            window.alert(`Seção não encontrada: ${secaoAlvo}`);
+          }
+        });
+      }
     } catch (erro) {
       window.alert(erroSeguro(erro));
     }
   };
   fonte.addEventListener('click', ativarFonte);
-  leitura.addEventListener('click', ativarLeitura);
+  leitura.addEventListener('click', () => ativarLeitura());
+  leituraHost.addEventListener('click', (evento) => {
+    const alvoEvento = evento.target;
+    if (!(alvoEvento instanceof Element)) return;
+    const link = alvoEvento.closest<HTMLAnchorElement>('a.nota-link');
+    if (!link) return;
+    evento.preventDefault();
+    const acao = acaoWikilink(link.dataset.caminho ?? null, link.dataset.secao ?? '');
+    if (acao.tipo === 'faltante') {
+      window.alert(`Nota não encontrada: ${link.dataset.alvo ?? link.textContent ?? ''}`);
+      return;
+    }
+    if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
+    void abrirNota(acao.caminho, acao.secao, 'leitura', pastaDaNota(acao.caminho));
+  });
 
   salvar.addEventListener('click', async () => {
     if (!editor || !nota || salvando || nota.somenteLeitura) return;
@@ -387,6 +612,7 @@ function mostrarNota(): void {
       const resultado = await salvarNota(token as string, nota.caminho, content, nota.sha);
       nota.sha = resultado.sha;
       estadoSalvo = editor.state;
+      textoSalvoAtual = textoExato(editor.state);
       atualizarEstado();
     } catch (erro) {
       if (erro instanceof ConflitoGitHub) mostrarConflito();
@@ -397,6 +623,45 @@ function mostrarNota(): void {
       salvar.textContent = 'Salvar';
     }
   });
+
+  if (modoInicial === 'leitura') ativarLeitura(secao);
+}
+
+function oferecerRascunho(): void {
+  if (!rascunhoMemoria) return;
+  const guardado = rascunhoMemoria;
+  const dialogo = elemento('dialog', 'dialogo');
+  const caixa = elemento('div', 'dialogo-conteudo');
+  caixa.append(
+    elemento('p', 'sobretitulo', 'EDIÇÃO PRESERVADA'),
+    elemento('h2', '', 'Continuar de onde parou?'),
+    elemento(
+      'p',
+      'dialogo-texto',
+      `A edição não gravada de ${nomeDaNota(guardado.nota.caminho)} ficou somente na memória desta aba.`,
+    ),
+  );
+  const acoes = elemento('div', 'dialogo-acoes');
+  const descartar = elemento('button', 'botao botao-sutil', 'Descartar');
+  const restaurar = elemento('button', 'botao botao-primario', 'Restaurar edição');
+  descartar.type = restaurar.type = 'button';
+  descartar.addEventListener('click', () => {
+    rascunhoMemoria = null;
+    dialogo.close();
+  });
+  restaurar.addEventListener('click', () => {
+    rascunhoMemoria = null;
+    nota = { ...guardado.nota, texto: guardado.texto };
+    pastaRetorno = guardado.pastaRetorno;
+    dialogo.close();
+    mostrarNota('fonte', '', guardado.nota.texto);
+  });
+  acoes.append(descartar, restaurar);
+  caixa.append(acoes);
+  dialogo.append(caixa);
+  document.body.append(dialogo);
+  dialogo.addEventListener('close', () => dialogo.remove());
+  dialogo.showModal();
 }
 
 function temAlteracoes(): boolean {
@@ -460,15 +725,16 @@ window.addEventListener('beforeunload', (evento) => {
 });
 
 if (token) {
+  iniciarBloqueio();
   mostrarCarregando('Carregando lista…');
   listarNotas(token)
     .then((resultado) => {
       caminhos = resultado;
+      arvore = construirArvore(caminhos);
       mostrarLista();
     })
     .catch((erro) => {
-      sair(sessionStorage);
-      token = null;
+      encerrarSessao();
       mostrarEntrada(erroSeguro(erro));
     });
 } else {

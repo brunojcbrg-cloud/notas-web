@@ -1,0 +1,56 @@
+import { readFileSync } from 'node:fs';
+import { EditorState } from '@codemirror/state';
+import { describe, expect, it, vi } from 'vitest';
+import { codificarEstado, decodificarBase64 } from '../src/bytes';
+import { ConflitoGitHub, salvarNota } from '../src/github';
+import { preservarQuebras } from '../src/NotaBytes';
+
+function resposta(dados: unknown, status = 200): Response {
+  return new Response(JSON.stringify(dados), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+describe('casos 48–50 · não regressão', () => {
+  it('48. casos 1–20 continuam presentes e são incluídos pelo npm test', () => {
+    const bytes = readFileSync(new URL('./bytes.test.ts', import.meta.url), 'utf8');
+    const api = readFileSync(new URL('./api-session.test.ts', import.meta.url), 'utf8');
+    for (let caso = 1; caso <= 10; caso += 1) expect(bytes).toContain(`'${caso}.`);
+    for (let caso = 11; caso <= 20; caso += 1) expect(api).toContain(`'${caso}.`);
+  });
+
+  it('49. abrir, editar e salvar envia SHA e preserva os bytes fora da edição', async () => {
+    let estado = EditorState.create({
+      doc: 'a\r\nb\r\nc',
+      extensions: [preservarQuebras('a\r\nb\r\nc', 'crlf')],
+    });
+    estado = estado.update({ changes: { from: 2, to: 3, insert: 'B' } }).state;
+    const content = codificarEstado(estado, false, false);
+    const fetcher = vi.fn(async () => resposta({ content: { sha: 'sha-novo' } })) as unknown as typeof fetch;
+    await salvarNota(
+      'segredo',
+      '06_Conhecimento/Nota.md',
+      content,
+      'sha-lido',
+      fetcher,
+    );
+    const corpo = JSON.parse(String(vi.mocked(fetcher).mock.calls[0]?.[1]?.body));
+    expect(corpo.sha).toBe('sha-lido');
+    expect(decodificarBase64(corpo.content).texto).toBe('a\r\nB\r\nc');
+  });
+
+  it('50. resposta 409 mantém o fluxo de conflito sem reenvio', async () => {
+    const fetcher = vi.fn(async () => resposta({ message: 'Conflict' }, 409)) as unknown as typeof fetch;
+    await expect(
+      salvarNota(
+        'segredo',
+        '06_Conhecimento/Nota.md',
+        'YQ==',
+        'sha-antigo',
+        fetcher,
+      ),
+    ).rejects.toBeInstanceOf(ConflitoGitHub);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
