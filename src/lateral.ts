@@ -1,4 +1,5 @@
 import { entradasDaPasta, pastaDaNota, type ArvoreNotas } from './tree';
+import type { OrigemMovimento } from './operacoes';
 
 export const CHAVE_LATERAL = 'notas-web.lateral';
 
@@ -57,6 +58,7 @@ export function criarLateral(
   aoAbrirNota: (caminho: string) => void,
   aoAbrirPasta: (caminho: string) => void,
   abertaPadrao = true,
+  aoMover?: (origem: OrigemMovimento, destino?: string) => void,
 ): Lateral {
   let arvore = arvoreInicial;
   const estado = lerEstadoLateral(storage, arvore, abertaPadrao);
@@ -64,6 +66,11 @@ export function criarLateral(
   let notaSelecionada: string | null = null;
   const pastas = new Map<string, { botao: HTMLButtonElement; filhos: HTMLElement }>();
   const notas = new Map<string, HTMLButtonElement>();
+  let menu: HTMLElement | null = null;
+  let fecharFora: ((evento: PointerEvent) => void) | null = null;
+  let arrastada: OrigemMovimento | null = null;
+  let toqueLongo: ReturnType<typeof setTimeout> | null = null;
+  let suprimirClique = false;
 
   const aside = document.createElement('aside');
   aside.className = 'lateral';
@@ -79,6 +86,96 @@ export function criarLateral(
   navegacao.className = 'lateral-arvore';
   navegacao.setAttribute('aria-label', 'Pastas e notas');
   aside.append(topo, navegacao);
+
+  const fecharMenu = (): void => {
+    menu?.remove(); menu = null;
+    if (fecharFora) document.removeEventListener('pointerdown', fecharFora, true);
+    fecharFora = null;
+  };
+  const mostrarMenu = (origem: OrigemMovimento, ancora: HTMLElement, x?: number, y?: number): void => {
+    fecharMenu();
+    const painel = document.createElement('div');
+    painel.className = 'lateral-menu';
+    painel.setAttribute('role', 'menu');
+    for (const [rotulo, acao] of [
+      ['Abrir', () => origem.tipo === 'nota' ? aoAbrirNota(origem.caminho) : aoAbrirPasta(origem.caminho)],
+      ['Mover para…', () => aoMover?.(origem)],
+    ] as const) {
+      const botao = document.createElement('button');
+      botao.type = 'button';
+      botao.setAttribute('role', 'menuitem');
+      botao.textContent = rotulo;
+      botao.addEventListener('click', () => { fecharMenu(); acao(); });
+      painel.append(botao);
+    }
+    document.body.append(painel);
+    const caixa = ancora.getBoundingClientRect();
+    painel.style.left = `${Math.min(x ?? caixa.right, window.innerWidth - painel.offsetWidth - 8)}px`;
+    painel.style.top = `${Math.min(y ?? caixa.bottom, window.innerHeight - painel.offsetHeight - 8)}px`;
+    menu = painel;
+    fecharFora = (evento: PointerEvent): void => {
+      if (painel.contains(evento.target as Node)) return;
+      fecharMenu();
+    };
+    document.addEventListener('pointerdown', fecharFora, true);
+  };
+
+  const gestos = (botao: HTMLButtonElement, origem: OrigemMovimento, destino?: string): void => {
+    if (!aoMover) return;
+    botao.draggable = true;
+    botao.addEventListener('dragstart', (evento) => {
+      arrastada = origem;
+      evento.dataTransfer?.setData('text/plain', origem.caminho);
+      if (evento.dataTransfer) evento.dataTransfer.effectAllowed = 'move';
+    });
+    botao.addEventListener('dragend', () => { arrastada = null; aside.querySelectorAll('.alvo-mover').forEach((el) => el.classList.remove('alvo-mover')); });
+    if (destino !== undefined) {
+      botao.addEventListener('dragover', (evento) => {
+        if (!arrastada || (arrastada.tipo === 'pasta' && (destino === arrastada.caminho || destino.startsWith(`${arrastada.caminho}/`)))) return;
+        evento.preventDefault();
+        botao.classList.add('alvo-mover');
+      });
+      botao.addEventListener('dragleave', () => botao.classList.remove('alvo-mover'));
+      botao.addEventListener('drop', (evento) => {
+        evento.preventDefault();
+        evento.stopPropagation();
+        botao.classList.remove('alvo-mover');
+        if (arrastada) aoMover(arrastada, destino);
+        arrastada = null;
+      });
+    }
+    botao.addEventListener('contextmenu', (evento) => {
+      evento.preventDefault();
+      mostrarMenu(origem, botao, evento.clientX, evento.clientY);
+    });
+    botao.addEventListener('touchstart', () => {
+      toqueLongo = setTimeout(() => { suprimirClique = true; mostrarMenu(origem, botao); }, 550);
+    }, { passive: true });
+    for (const tipo of ['touchend', 'touchcancel', 'touchmove']) {
+      botao.addEventListener(tipo, () => { if (toqueLongo) clearTimeout(toqueLongo); toqueLongo = null; }, { passive: true });
+    }
+    botao.addEventListener('click', (evento) => {
+      if (!suprimirClique) return;
+      evento.stopImmediatePropagation();
+      suprimirClique = false;
+    }, true);
+  };
+
+  if (aoMover) {
+    topo.title = 'Solte aqui para mover à pasta principal';
+    topo.addEventListener('dragover', (evento) => {
+      if (!arrastada) return;
+      evento.preventDefault();
+      topo.classList.add('alvo-mover');
+    });
+    topo.addEventListener('dragleave', () => topo.classList.remove('alvo-mover'));
+    topo.addEventListener('drop', (evento) => {
+      evento.preventDefault();
+      topo.classList.remove('alvo-mover');
+      if (arrastada) aoMover(arrastada, '');
+      arrastada = null;
+    });
+  }
 
   const guardar = (): void => {
     try {
@@ -97,6 +194,7 @@ export function criarLateral(
   };
 
   const renderizar = (): void => {
+    fecharMenu();
     pastas.clear();
     notas.clear();
     contagem.textContent = `${arvore.notas.length} notas`;
@@ -120,6 +218,18 @@ export function criarLateral(
           nome.className = 'lateral-nome';
           nome.textContent = entrada.nome;
           botao.append(simbolo, nome);
+          gestos(botao, { tipo: 'nota', caminho: entrada.caminho });
+          if (aoMover) {
+            const mais = document.createElement('span');
+            mais.className = 'lateral-mais';
+            mais.textContent = '⋯';
+            mais.setAttribute('role', 'button');
+            mais.setAttribute('tabindex', '0');
+            mais.setAttribute('aria-label', `Ações para ${entrada.nome}`);
+            mais.addEventListener('click', (evento) => { evento.stopPropagation(); mostrarMenu({ tipo: 'nota', caminho: entrada.caminho }, mais); });
+            mais.addEventListener('keydown', (evento) => { if (evento.key === 'Enter' || evento.key === ' ') { evento.preventDefault(); mostrarMenu({ tipo: 'nota', caminho: entrada.caminho }, mais); } });
+            botao.append(mais);
+          }
           botao.addEventListener('click', () => aoAbrirNota(entrada.caminho));
           notas.set(entrada.caminho, botao);
           grupo.append(botao);
@@ -145,6 +255,18 @@ export function criarLateral(
         total.className = 'lateral-contagem';
         total.textContent = String(entrada.totalNotas);
         botao.append(seta, nome, total);
+        gestos(botao, { tipo: 'pasta', caminho: entrada.caminho }, entrada.caminho);
+        if (aoMover) {
+          const mais = document.createElement('span');
+          mais.className = 'lateral-mais';
+          mais.textContent = '⋯';
+          mais.setAttribute('role', 'button');
+          mais.setAttribute('tabindex', '0');
+          mais.setAttribute('aria-label', `Ações para ${entrada.nome}`);
+          mais.addEventListener('click', (evento) => { evento.stopPropagation(); mostrarMenu({ tipo: 'pasta', caminho: entrada.caminho }, mais); });
+          mais.addEventListener('keydown', (evento) => { if (evento.key === 'Enter' || evento.key === ' ') { evento.preventDefault(); mostrarMenu({ tipo: 'pasta', caminho: entrada.caminho }, mais); } });
+          botao.append(mais);
+        }
         const filhos = nivel(entrada.caminho, profundidade + 1);
         filhos.id = id;
         pastas.set(entrada.caminho, { botao, filhos });

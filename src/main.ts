@@ -9,13 +9,14 @@ import {
   conflitoParaTela,
   criarNota,
   lerNota,
-  listarNotas,
+  listarNotasComSha,
   PASTA,
   salvarNota,
   type NotaRemota,
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
 import { criarLateral, type Lateral } from './lateral';
+import { mover, planejarMovimento, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
 import { configurarLivePreview, livePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
@@ -51,6 +52,8 @@ const compartimentoNumeros = new Compartment();
 let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
 let caminhos: string[] = [];
+let blobs = new Map<string, string>();
+let treeSha = '';
 let arvore: ArvoreNotas = construirArvore([]);
 let pastaAtual = '';
 let pastaRetorno = '';
@@ -59,6 +62,8 @@ let editor: EditorView | null = null;
 let estadoSalvo: EditorState | null = null;
 let textoSalvoAtual: string | null = null;
 let salvando = false;
+let movendo = false;
+let salvarAtual: ((forcar?: boolean) => Promise<boolean>) | null = null;
 let pararBloqueio: (() => void) | null = null;
 let casca: HTMLElement | null = null;
 let conteudo: HTMLElement | null = null;
@@ -97,6 +102,7 @@ function limpar(): void {
   editor?.destroy();
   editor = null;
   estadoSalvo = null;
+  salvarAtual = null;
   conteudo?.replaceChildren();
 }
 
@@ -196,6 +202,8 @@ function encerrarSessao(): void {
   sair(sessionStorage);
   token = null;
   caminhos = [];
+  blobs = new Map();
+  treeSha = '';
   arvore = construirArvore([]);
   nota = null;
 }
@@ -260,6 +268,7 @@ function montarCasca(): void {
       if (telaAtual === 'lista') mostrarLista('', false);
     },
     !telaPequena(),
+    (origem, destino) => void moverInterativo(origem, destino),
   );
   lateral.elemento.id = 'explorador-notas';
   conteudo = elemento('main', 'app-conteudo');
@@ -352,7 +361,10 @@ function mostrarEntrada(mensagem = ''): void {
     botao.textContent = 'Verificando…';
     status.hidden = true;
     try {
-      caminhos = await listarNotas(valor);
+      const lista = await listarNotasComSha(valor);
+      caminhos = lista.caminhos;
+      blobs = lista.blobs;
+      treeSha = lista.treeSha;
       arvore = construirArvore(caminhos);
       guardarToken(sessionStorage, valor);
       token = valor;
@@ -566,6 +578,8 @@ function mostrarCriacao(): void {
       caminhos = [...caminhos, caminho].sort((a, b) => a.localeCompare(b, 'pt-BR'));
       arvore = construirArvore(caminhos);
       lateral?.atualizarArvore(arvore);
+      blobs.set(caminho, resultado.sha);
+      treeSha = resultado.treeSha ?? '';
       nota = {
         caminho,
         sha: resultado.sha,
@@ -589,6 +603,107 @@ function mostrarCriacao(): void {
   dialogo.addEventListener('close', () => dialogo.remove());
   dialogo.showModal();
   input.focus();
+}
+
+function mostrarEscolhaDestino(origem: OrigemMovimento): void {
+  const dialogo = elemento('dialog', 'dialogo');
+  const form = elemento('form', 'dialogo-conteudo');
+  form.append(
+    elemento('p', 'sobretitulo', 'MOVER'),
+    elemento('h2', '', origem.tipo === 'nota' ? 'Mover nota para…' : 'Mover pasta para…'),
+  );
+  const label = elemento('label', '', 'Pasta de destino');
+  label.htmlFor = 'destino-movimento';
+  const seletor = elemento('select', 'campo') as HTMLSelectElement;
+  seletor.id = 'destino-movimento';
+  for (const pasta of arvore.pastas.values()) {
+    if (origem.tipo === 'pasta' &&
+      (pasta.caminho === origem.caminho || pasta.caminho.startsWith(`${origem.caminho}/`))) continue;
+    const opcao = elemento('option', '', pasta.caminho || '06_Conhecimento (raiz)');
+    opcao.value = pasta.caminho;
+    seletor.append(opcao);
+  }
+  const acoes = elemento('div', 'dialogo-acoes');
+  const cancelar = elemento('button', 'botao botao-sutil', 'Cancelar');
+  cancelar.type = 'button';
+  cancelar.addEventListener('click', () => dialogo.close());
+  const confirmar = elemento('button', 'botao botao-primario', 'Mover');
+  confirmar.type = 'submit';
+  acoes.append(cancelar, confirmar);
+  form.append(label, seletor, acoes);
+  form.addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    dialogo.close();
+    void moverInterativo(origem, seletor.value);
+  });
+  dialogo.append(form);
+  document.body.append(dialogo);
+  dialogo.addEventListener('close', () => dialogo.remove());
+  dialogo.showModal();
+  seletor.focus();
+}
+
+async function moverInterativo(origem: OrigemMovimento, destino?: string): Promise<void> {
+  if (destino === undefined) return mostrarEscolhaDestino(origem);
+  if (!token || movendo) return;
+  try {
+    planejarMovimento(origem, destino, blobs);
+  } catch (erro) {
+    window.alert(erroSeguro(erro));
+    return;
+  }
+  if (temAlteracoes()) {
+    if (!window.confirm('Há alterações não gravadas. Salvar antes de mover? Cancelar mantém a edição aberta.')) return;
+    if (!salvarAtual || !(await salvarAtual())) return;
+  }
+  movendo = true;
+  try {
+    if (!treeSha) {
+      const lista = await listarNotasComSha(token);
+      caminhos = lista.caminhos;
+      blobs = lista.blobs;
+      treeSha = lista.treeSha;
+      planejarMovimento(origem, destino, blobs);
+    }
+    const resultado = await mover(token, origem, destino, blobs, treeSha);
+    const novosBlobs = new Map(blobs);
+    for (const antigo of resultado.caminhos.keys()) novosBlobs.delete(antigo);
+    for (const [antigo, novo] of resultado.caminhos) novosBlobs.set(novo, blobs.get(antigo) as string);
+    blobs = novosBlobs;
+    treeSha = resultado.treeSha;
+    caminhos = caminhos.map((caminho) => resultado.caminhos.get(caminho) ?? caminho)
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const prefixoAntigo = origem.tipo === 'pasta' ? `${origem.caminho}/` : '';
+    const prefixoNovo = origem.tipo === 'pasta'
+      ? `${destino ? `${destino}/` : ''}${origem.caminho.split('/').at(-1)}/` : '';
+    const remapearPasta = (pasta: string): string =>
+      prefixoAntigo && (pasta === origem.caminho || pasta.startsWith(prefixoAntigo))
+        ? `${prefixoNovo.slice(0, -1)}${pasta.slice(origem.caminho.length)}` : pasta;
+    pastaAtual = remapearPasta(pastaAtual);
+    pastaRetorno = remapearPasta(pastaRetorno);
+    if (nota && resultado.caminhos.has(nota.caminho)) {
+      nota.caminho = resultado.caminhos.get(nota.caminho) as string;
+      pastaRetorno = pastaDaNota(nota.caminho);
+      pastaAtual = pastaRetorno;
+      atualizarCabecalho(nota.caminho, true);
+    }
+    arvore = construirArvore(caminhos);
+    lateral?.atualizarArvore(arvore);
+    if (nota) lateral?.selecionarNota(nota.caminho);
+    if (telaAtual === 'lista') {
+      const rolagem = conteudo?.scrollTop ?? 0;
+      mostrarLista('', false);
+      if (conteudo) conteudo.scrollTop = rolagem;
+    }
+  } catch (erro) {
+    if (erro instanceof ConflitoGitHub) {
+      if (window.confirm('O repositório mudou durante a operação. Recarregar a página para obter a versão nova?')) {
+        window.location.reload();
+      }
+    } else window.alert(erroSeguro(erro));
+  } finally {
+    movendo = false;
+  }
 }
 
 function mostrarNota(
@@ -682,6 +797,33 @@ function mostrarNota(
   const marcarModo = (ativo: HTMLButtonElement): void => {
     for (const botao of [fonte, preview, leitura]) botao.classList.toggle('ativo', botao === ativo);
   };
+
+  salvarAtual = async (forcar = false): Promise<boolean> => {
+    if (!editor || !nota || salvando || nota.somenteLeitura || !token) return false;
+    if (!temAlteracoes() && !forcar) return true;
+    salvando = true;
+    salvar.disabled = true;
+    salvar.textContent = 'Salvando…';
+    try {
+      const content = codificarEstado(editor.state, nota.tinhaBom, nota.somenteLeitura);
+      const resultado = await salvarNota(token, nota.caminho, content, nota.sha);
+      nota.sha = resultado.sha;
+      blobs.set(nota.caminho, resultado.sha);
+      treeSha = resultado.treeSha ?? '';
+      estadoSalvo = editor.state;
+      textoSalvoAtual = textoExato(editor.state);
+      atualizarEstado();
+      return true;
+    } catch (erro) {
+      if (erro instanceof ConflitoGitHub) mostrarConflito();
+      else window.alert(erroSeguro(erro));
+      return false;
+    } finally {
+      salvando = false;
+      salvar.disabled = nota?.somenteLeitura ?? false;
+      salvar.textContent = 'Salvar';
+    }
+  };
   const ativarFonte = (): void => {
     if (editor) configurarLivePreview(editor, compartimentoPreview, false);
     editor?.dispatch({ effects: compartimentoNumeros.reconfigure(lineNumbers()) });
@@ -749,27 +891,7 @@ function mostrarNota(
     void abrirNota(acao.caminho, acao.secao, 'leitura', pastaDaNota(acao.caminho));
   });
 
-  salvar.addEventListener('click', async () => {
-    if (!editor || !nota || salvando || nota.somenteLeitura) return;
-    salvando = true;
-    salvar.disabled = true;
-    salvar.textContent = 'Salvando…';
-    try {
-      const content = codificarEstado(editor.state, nota.tinhaBom, nota.somenteLeitura);
-      const resultado = await salvarNota(token as string, nota.caminho, content, nota.sha);
-      nota.sha = resultado.sha;
-      estadoSalvo = editor.state;
-      textoSalvoAtual = textoExato(editor.state);
-      atualizarEstado();
-    } catch (erro) {
-      if (erro instanceof ConflitoGitHub) mostrarConflito();
-      else window.alert(erroSeguro(erro));
-    } finally {
-      salvando = false;
-      salvar.disabled = nota.somenteLeitura;
-      salvar.textContent = 'Salvar';
-    }
-  });
+  salvar.addEventListener('click', () => { void salvarAtual?.(true); });
 
   if (modoInicial === 'leitura') ativarLeitura(secao);
   else if (modoInicial === 'preview') ativarPreview();
@@ -875,9 +997,11 @@ window.addEventListener('beforeunload', (evento) => {
 if (token) {
   iniciarBloqueio();
   mostrarCarregando('Carregando lista…');
-  listarNotas(token)
+  listarNotasComSha(token)
     .then((resultado) => {
-      caminhos = resultado;
+      caminhos = resultado.caminhos;
+      blobs = resultado.blobs;
+      treeSha = resultado.treeSha;
       arvore = construirArvore(caminhos);
       lateral?.atualizarArvore(arvore);
       mostrarLista();

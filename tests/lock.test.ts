@@ -36,7 +36,7 @@ describe('casos 43–47 · bloqueio', () => {
     expect(trancar).toHaveBeenCalledOnce();
   });
 
-  it('45. tecla, clique e rolagem zeram o relógio de inatividade', () => {
+  it('45. tecla, clique, arrasto e rolagem zeram o relógio de inatividade', () => {
     const trancar = vi.fn();
     const controlador = new BloqueioInatividade(trancar);
     const desconectar = conectarBloqueio(controlador, window, document);
@@ -44,6 +44,8 @@ describe('casos 43–47 · bloqueio', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
     vi.advanceTimersByTime(10 * 60 * 1000);
     window.dispatchEvent(new MouseEvent('click'));
+    vi.advanceTimersByTime(10 * 60 * 1000);
+    window.dispatchEvent(new Event('dragstart'));
     vi.advanceTimersByTime(10 * 60 * 1000);
     window.dispatchEvent(new Event('scroll'));
     vi.advanceTimersByTime(LIMITE_INATIVIDADE_MS - 1);

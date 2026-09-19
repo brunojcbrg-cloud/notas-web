@@ -12,6 +12,13 @@ export interface NotaRemota extends NotaDecodificada {
 
 export interface ResultadoGravacao {
   sha: string;
+  treeSha?: string;
+}
+
+export interface ListaNotas {
+  caminhos: string[];
+  blobs: Map<string, string>;
+  treeSha: string;
 }
 
 export type Fetcher = typeof fetch;
@@ -40,12 +47,13 @@ export class CaminhoExistente extends Error {
   }
 }
 
-function validarCaminho(caminho: string): void {
+export function validarCaminho(caminho: string): void {
   if (
     !caminho.startsWith(PASTA) ||
     !caminho.endsWith('.md') ||
     caminho.includes('..') ||
-    caminho.includes('\\')
+    caminho.includes('\\') ||
+    caminho.slice(PASTA.length).split('/').some((parte) => !parte)
   ) {
     throw new Error('Caminho fora de 06_Conhecimento ou inválido.');
   }
@@ -79,23 +87,46 @@ async function verificarResposta(resposta: Response): Promise<void> {
   throw new ErroGitHub(resposta.status, `Falha na API do GitHub (${resposta.status}).`);
 }
 
-export async function listarNotas(token: string, fetcher: Fetcher = fetch): Promise<string[]> {
+export async function listarNotasComSha(token: string, fetcher: Fetcher = fetch): Promise<ListaNotas> {
   const url = `${API}/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
   const resposta = await fetcher(url, { headers: cabecalhos(token) });
   await verificarResposta(resposta);
   const dados = (await resposta.json()) as {
-    tree?: Array<{ path?: string; type?: string }>;
+    sha?: string;
+    truncated?: boolean;
+    tree?: Array<{ path?: string; type?: string; sha?: string }>;
   };
-  return (dados.tree ?? [])
+  if (dados.truncated || typeof dados.sha !== 'string') {
+    throw new ErroGitHub(502, 'Árvore incompleta ou sem SHA; mover notas não é seguro.');
+  }
+  const itens = (dados.tree ?? [])
     .filter(
-      (item): item is { path: string; type?: string } =>
+      (item): item is { path: string; type?: string; sha?: string } =>
         typeof item.path === 'string' &&
         item.type === 'blob' &&
         item.path.startsWith(PASTA) &&
         item.path.endsWith('.md'),
-    )
-    .map((item) => item.path)
-    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    );
+  if (itens.some((item) => typeof item.sha !== 'string' || !item.sha)) {
+    throw new ErroGitHub(502, 'Árvore sem SHA de blob; mover notas não é seguro.');
+  }
+  return {
+    caminhos: itens.map((item) => item.path).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    blobs: new Map(itens.filter((item) => typeof item.sha === 'string').map((item) => [item.path, item.sha as string])),
+    treeSha: dados.sha,
+  };
+}
+
+export async function listarNotas(token: string, fetcher: Fetcher = fetch): Promise<string[]> {
+  const url = `${API}/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
+  const resposta = await fetcher(url, { headers: cabecalhos(token) });
+  await verificarResposta(resposta);
+  const dados = (await resposta.json()) as { tree?: Array<{ path?: string; type?: string }> };
+  return (dados.tree ?? [])
+    .filter((item): item is { path: string; type?: string } =>
+      typeof item.path === 'string' && item.type === 'blob' &&
+      item.path.startsWith(PASTA) && item.path.endsWith('.md'))
+    .map((item) => item.path).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
 export async function lerNota(
@@ -136,11 +167,11 @@ async function putNota(
     },
   );
   await verificarResposta(resposta);
-  const dados = (await resposta.json()) as { content?: { sha?: string } };
+  const dados = (await resposta.json()) as { content?: { sha?: string }; commit?: { tree?: { sha?: string } } };
   if (typeof dados.content?.sha !== 'string') {
     throw new ErroGitHub(502, 'Resposta inesperada ao gravar a nota.');
   }
-  return { sha: dados.content.sha };
+  return { sha: dados.content.sha, treeSha: dados.commit?.tree?.sha };
 }
 
 export function salvarNota(

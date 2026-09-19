@@ -39,7 +39,7 @@ def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
         def responder(rota) -> None:
             req = rota.request
             if "/git/trees/master" in req.url:
-                dados = {"tree": [{"path": caminho, "type": "blob"} for caminho in caminhos]}
+                dados = {"sha": "tree-e2e", "tree": [{"path": caminho, "type": "blob", "sha": "sha-e2e"} for caminho in caminhos]}
                 rota.fulfill(status=200, content_type="application/json", body=json.dumps(dados))
             elif "/contents/" in req.url and req.method == "GET":
                 caminho = unquote(urlsplit(req.url).path.split("/contents/", 1)[1])

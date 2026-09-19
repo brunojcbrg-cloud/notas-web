@@ -40,6 +40,7 @@ def main() -> int:
     sys.dont_write_bytecode = True
     from certificar_handoff_05 import certificar
     from certificar_handoff_06 import certificar as certificar_06
+    from certificar_handoff_07 import certificar as certificar_07
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", help=f"endereço externo (padrão: docs/ local; publicado: {PUBLICADA})")
@@ -80,6 +81,14 @@ def main() -> int:
 
         pagina.on("console", registrar_console)
         try:
+            pagina.route(
+                "https://api.github.com/**",
+                lambda rota: rota.fulfill(
+                    status=401,
+                    content_type="application/json",
+                    body='{"message":"Bad credentials"}',
+                ),
+            )
             pagina.goto(url, wait_until="networkidle", timeout=30_000)
             pagina.locator("#token").wait_for(state="visible", timeout=10_000)
             caso_66 = not erros_javascript and not erros_console
@@ -97,7 +106,7 @@ def main() -> int:
                 MENSAGEM_API in texto and not erros_javascript and not erros_console
             )
             print(
-                f"{'OK' if caso_67 else 'FALHA'} 67. token invalido devolveu a mensagem da API; "
+                f"{'OK' if caso_67 else 'FALHA'} 67. resposta 401 simulada devolveu a mensagem da API; "
                 f"erros JavaScript: {len(erros_javascript) + len(erros_console)}"
             )
             if erros_rede:
@@ -108,7 +117,8 @@ def main() -> int:
                 print(f"MENSAGEM RECEBIDA: {texto!r}")
             caso_05 = certificar(navegador, url) if caso_66 and caso_67 else False
             caso_06 = certificar_06(navegador, url, args.screenshot) if caso_05 else False
-            return 0 if caso_66 and caso_67 and caso_05 and caso_06 else 1
+            caso_07 = certificar_07(navegador, url) if caso_06 else False
+            return 0 if caso_66 and caso_67 and caso_05 and caso_06 and caso_07 else 1
         finally:
             navegador.close()
     finally:

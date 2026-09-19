@@ -77,12 +77,14 @@ export function conectarBloqueio(
     controlador.visibilidadeMudou(documento.visibilityState === 'hidden');
   janela.addEventListener('keydown', interagir, true);
   janela.addEventListener('click', interagir, true);
+  janela.addEventListener('dragstart', interagir, true);
   janela.addEventListener('scroll', interagir, { capture: true, passive: true });
   documento.addEventListener('visibilitychange', visibilidade);
   controlador.iniciar();
   return () => {
     janela.removeEventListener('keydown', interagir, true);
     janela.removeEventListener('click', interagir, true);
+    janela.removeEventListener('dragstart', interagir, true);
     janela.removeEventListener('scroll', interagir, true);
     documento.removeEventListener('visibilitychange', visibilidade);
     controlador.parar();
