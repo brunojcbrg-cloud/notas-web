@@ -19,7 +19,7 @@ def certificar(navegador, url: str) -> bool:
         if not passou:
             falhas.append(numero)
 
-    def contexto_falso(largura=1280, conflito=False, relogio=False):
+    def contexto_falso(largura=1280, conflito=False, relogio=False, links=False, homonimo=False):
         contexto = navegador.new_context(viewport={"width": largura, "height": 900})
         pagina = contexto.new_page()
         if relogio:
@@ -27,14 +27,14 @@ def certificar(navegador, url: str) -> bool:
         erros: list[str] = []
         pagina.on("pageerror", lambda erro: erros.append(str(erro)))
         estado = {
-            "blobs": {NOTA: "blob-nota", f"{P}B/Outra.md": "blob-outra", **{
+            "blobs": {NOTA: "blob-nota", f"{P}B/Outra.md": "blob-outra", **({f"{P}C/Nota.md": "blob-homonimo"} if homonimo else {}), **{
                 f"{P}Genética/P3/Nota {i}.md": f"blob-p3-{i}" for i in range(77)
             }},
-            "bytes": {"blob-nota": b"# Nota original\n", "blob-outra": b"# Outra\n", **{
+            "bytes": {"blob-nota": b"# Nota original\n", "blob-outra": (b"\xef\xbb\xbf# Outra\r\n" + b"[[Nota#Sec|alias]]\r\n" * 169 + b"fim") if links else b"# Outra\n", "blob-homonimo": b"# Homonimo\n", **{
                 f"blob-p3-{i}": f"# Nota {i}\n".encode() for i in range(77)
             }},
             "tree_sha": "tree-inicial", "commit_sha": "commit-inicial",
-            "pending": None, "calls": [], "puts": [], "conflict": conflito,
+            "pending": None, "calls": [], "puts": [], "blob_posts": [], "conflict": conflito,
         }
 
         def responder(rota) -> None:
@@ -61,6 +61,17 @@ def certificar(navegador, url: str) -> bool:
                     estado["bytes"][novo_sha] = base64.b64decode(corpo["content"])
                     estado["tree_sha"] = f"tree-salva-{len(estado['puts'])}"
                     dados = {"content": {"sha": novo_sha}, "commit": {"tree": {"sha": estado["tree_sha"]}}}
+            elif "/git/blobs/" in caminho_url and req.method == "GET":
+                sha = caminho_url.rsplit("/", 1)[-1]
+                estado["calls"].append((req.method, caminho_url, None))
+                dados = {"content": base64.b64encode(estado["bytes"][sha]).decode(), "encoding": "base64"}
+            elif caminho_url.endswith("/git/blobs") and req.method == "POST":
+                corpo = req.post_data_json
+                estado["calls"].append((req.method, caminho_url, corpo))
+                novo_sha = f"blob-reescrito-{len(estado['blob_posts']) + 1}"
+                estado["bytes"][novo_sha] = base64.b64decode(corpo["content"])
+                estado["blob_posts"].append(novo_sha)
+                dados = {"sha": novo_sha}
             elif "/git/ref/heads/master" in caminho_url and req.method == "GET":
                 estado["calls"].append((req.method, caminho_url, None))
                 dados = {"object": {"sha": estado["commit_sha"]}}
@@ -217,6 +228,53 @@ def certificar(navegador, url: str) -> bool:
         verificar(141, "iniciar arrasto renova o relógio de inatividade no Edge",
                  ativa_apos_arrasto and bloqueou_depois and not erros,
                  "ativa após 14min59s + arrasto + 2s; bloqueia 15min após o dragstart")
+    finally:
+        contexto.close()
+
+    contexto, pagina, estado, erros = contexto_falso(links=True)
+    try:
+        avisos: list[str] = []
+        def dialogo_renomear(dialogo) -> None:
+            avisos.append(dialogo.message)
+            if dialogo.type == "prompt":
+                dialogo.accept("Renomeada")
+            else:
+                dialogo.accept()
+        pagina.on("dialog", dialogo_renomear)
+        pagina.locator('.lateral-pasta[data-caminho="A"]').click()
+        pagina.locator(f'.lateral-nota[data-caminho="{NOTA}"]').click(button="right")
+        pagina.get_by_role("menuitem", name="Renomear").click()
+        novo = f"{P}A/Renomeada.md"
+        pagina.locator(f'.lateral-nota[data-caminho="{novo}"]').wait_for(state="attached")
+        bytes_links = estado["bytes"][estado["blobs"][f"{P}B/Outra.md"]]
+        verificar(128, "renomear reescreve 169 wikilinks em um commit, com bytes intactos fora do nome",
+                 estado["blobs"].get(novo) == "blob-nota" and NOTA not in estado["blobs"]
+                 and len(estado["blob_posts"]) == 1
+                 and bytes_links == (b"\xef\xbb\xbf# Outra\r\n" + b"[[Renomeada#Sec|alias]]\r\n" * 169 + b"fim")
+                 and len([c for c in estado["calls"] if c[0] == "POST" and c[1].endswith("/git/commits")]) == 1
+                 and any("169 wikilink(s) serão reescritos" in aviso for aviso in avisos)
+                 and any("169 wikilink(s) reescritos" in aviso for aviso in avisos) and not erros,
+                 f"{len(estado['calls'])} chamadas, {len(estado['blob_posts'])} blob novo")
+    finally:
+        contexto.close()
+
+    contexto, pagina, estado, erros = contexto_falso(links=True, homonimo=True)
+    try:
+        avisos = []
+        def dialogo_ambiguo(dialogo) -> None:
+            avisos.append(dialogo.message)
+            if dialogo.type == "prompt": dialogo.accept("Renomeada")
+            else: dialogo.accept()
+        pagina.on("dialog", dialogo_ambiguo)
+        pagina.locator('.lateral-pasta[data-caminho="A"]').click()
+        pagina.locator(f'.lateral-nota[data-caminho="{NOTA}"]').click(button="right")
+        pagina.get_by_role("menuitem", name="Renomear").click()
+        pagina.locator(f'.lateral-nota[data-caminho="{P}A/Renomeada.md"]').wait_for(state="attached")
+        verificar(129, "links ambíguos não reescritos e 169 avisados na confirmação",
+                 len(estado["blob_posts"]) == 0
+                 and b"[[Nota#Sec|alias]]" in estado["bytes"][estado["blobs"][f"{P}B/Outra.md"]]
+                 and any("169 ficarão de fora" in aviso for aviso in avisos)
+                 and any("169 ficaram de fora" in aviso for aviso in avisos) and not erros)
     finally:
         contexto.close()
 

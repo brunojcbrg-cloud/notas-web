@@ -16,7 +16,7 @@ import {
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
 import { criarLateral, type Lateral } from './lateral';
-import { mover, planejarMovimento, type OrigemMovimento } from './operacoes';
+import { analisarRenomeacao, mover, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
 import { configurarLivePreview, livePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
@@ -269,6 +269,7 @@ function montarCasca(): void {
     },
     !telaPequena(),
     (origem, destino) => void moverInterativo(origem, destino),
+    (origem) => void renomearInterativo(origem),
   );
   lateral.elemento.id = 'explorador-notas';
   conteudo = elemento('main', 'app-conteudo');
@@ -704,6 +705,73 @@ async function moverInterativo(origem: OrigemMovimento, destino?: string): Promi
   } finally {
     movendo = false;
   }
+}
+
+async function renomearInterativo(origem: OrigemMovimento): Promise<void> {
+  if (!token || movendo) return;
+  const atual = origem.caminho.split('/').at(-1) as string;
+  const resposta = window.prompt('Novo nome:', origem.tipo === 'nota' ? atual.replace(/\.md$/i, '') : atual);
+  if (resposta === null) return;
+  const nome = resposta.trim();
+  try {
+    planejarRenomeacao(origem, nome, blobs);
+  } catch (erro) { window.alert(erroSeguro(erro)); return; }
+  if (temAlteracoes()) {
+    if (!window.confirm('Há alterações não gravadas. Salvar antes de renomear? Cancelar mantém a edição aberta.')) return;
+    if (!salvarAtual || !(await salvarAtual())) return;
+  }
+  movendo = true;
+  try {
+    if (!treeSha) {
+      const lista = await listarNotasComSha(token);
+      caminhos = lista.caminhos; blobs = lista.blobs; treeSha = lista.treeSha;
+    }
+    const plano = await analisarRenomeacao(token, origem, nome, blobs);
+    const aviso = origem.tipo === 'nota'
+      ? `Renomear ${atual}?\n${plano.reescritos} wikilink(s) serão reescritos. ${plano.ignorados} ficarão de fora (ambiguidade ou nota somente leitura) e poderão apontar para o nome antigo.`
+      : `Renomear a pasta ${atual} e suas ${plano.caminhos.size} nota(s)? Os wikilinks por nome continuam válidos.`;
+    if (!window.confirm(aviso)) return;
+    const resultado = await renomear(token, origem, plano, blobs, treeSha);
+    const novosBlobs = new Map(blobs);
+    for (const antigo of resultado.caminhos.keys()) novosBlobs.delete(antigo);
+    for (const [antigo, novo] of resultado.caminhos) {
+      novosBlobs.set(novo, resultado.blobsReescritos.get(antigo) ?? blobs.get(antigo) as string);
+    }
+    for (const [caminho, sha] of resultado.blobsReescritos) {
+      if (!resultado.caminhos.has(caminho)) novosBlobs.set(caminho, sha);
+    }
+    blobs = novosBlobs;
+    treeSha = resultado.treeSha;
+    caminhos = caminhos.map((caminho) => resultado.caminhos.get(caminho) ?? caminho)
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    if (origem.tipo === 'pasta') {
+      const novoCaminho = (resultado.caminhos.values().next().value as string).slice(PASTA.length);
+      const prefixoNovo = novoCaminho.split('/').slice(0, origem.caminho.split('/').length).join('/');
+      const remapear = (pasta: string): string => pasta === origem.caminho || pasta.startsWith(`${origem.caminho}/`)
+        ? `${prefixoNovo}${pasta.slice(origem.caminho.length)}` : pasta;
+      pastaAtual = remapear(pastaAtual);
+      pastaRetorno = remapear(pastaRetorno);
+    }
+    if (nota) {
+      const reescrita = plano.reescritas.find((item) => item.caminho === nota?.caminho);
+      if (reescrita) {
+        nota.texto = reescrita.texto;
+        nota.sha = resultado.blobsReescritos.get(reescrita.caminho) as string;
+      }
+      nota.caminho = resultado.caminhos.get(nota.caminho) ?? nota.caminho;
+      pastaRetorno = pastaDaNota(nota.caminho);
+      pastaAtual = pastaRetorno;
+    }
+    arvore = construirArvore(caminhos);
+    lateral?.atualizarArvore(arvore);
+    if (nota && telaAtual === 'nota') mostrarNota();
+    else if (telaAtual === 'lista') mostrarLista('', false);
+    window.alert(`Renomeado. ${plano.reescritos} wikilink(s) reescritos; ${plano.ignorados} ficaram de fora.`);
+  } catch (erro) {
+    if (erro instanceof ConflitoGitHub) {
+      if (window.confirm('O repositório mudou durante a operação. Recarregar a página para obter a versão nova?')) window.location.reload();
+    } else window.alert(erroSeguro(erro));
+  } finally { movendo = false; }
 }
 
 function mostrarNota(

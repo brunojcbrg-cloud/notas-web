@@ -2,6 +2,9 @@ import {
   BRANCH, CaminhoExistente, ConflitoGitHub, ErroGitHub, PASTA, REPO,
   validarCaminho, type Fetcher,
 } from './github';
+import { analisarAlvo } from './markdown';
+import { codificarBase64, decodificarBase64 } from './bytes';
+import { nomeDaNota } from './tree';
 
 const API = `https://api.github.com/repos/${REPO}`;
 
@@ -15,10 +18,156 @@ export interface ResultadoMovimento {
   treeSha: string;
 }
 
-function validarPasta(pasta: string): void {
+export function validarPasta(pasta: string): void {
   if (pasta === '') return;
   validarCaminho(`${PASTA}${pasta}/__validacao__.md`);
   if (pasta.startsWith('/') || pasta.endsWith('/')) throw new Error('Pasta inválida.');
+}
+
+export function planejarRenomeacao(
+  origem: OrigemMovimento, nome: string, blobs: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const mudancas = new Map<string, string>();
+  if (!nome || nome === '.' || nome.includes('/') || nome.includes('\\') || nome.includes('..')) {
+    throw new Error('Nome inválido.');
+  }
+  if (origem.tipo === 'nota') {
+    validarCaminho(origem.caminho);
+    if (!blobs.has(origem.caminho)) throw new Error('SHA da nota indisponível. Recarregue a lista.');
+    const arquivo = nome.endsWith('.md') ? nome : `${nome}.md`;
+    const partes = origem.caminho.split('/');
+    partes[partes.length - 1] = arquivo;
+    mudancas.set(origem.caminho, partes.join('/'));
+  } else {
+    validarPasta(origem.caminho);
+    if (!origem.caminho) throw new Error('A pasta principal não pode ser renomeada.');
+    const prefixo = `${PASTA}${origem.caminho}/`;
+    const partes = origem.caminho.split('/');
+    partes[partes.length - 1] = nome;
+    const novoPrefixo = `${PASTA}${partes.join('/')}/`;
+    validarPasta(partes.join('/'));
+    for (const caminho of blobs.keys()) {
+      if (caminho.startsWith(prefixo)) mudancas.set(caminho, `${novoPrefixo}${caminho.slice(prefixo.length)}`);
+    }
+    if (!mudancas.size) throw new Error('Pasta sem notas ou SHAs indisponíveis. Recarregue a lista.');
+  }
+  for (const [antigo, novo] of mudancas) {
+    validarCaminho(antigo);
+    validarCaminho(novo);
+    if (novo === antigo) throw new Error('O nome não mudou.');
+    if (blobs.has(novo) && !mudancas.has(novo)) throw new CaminhoExistente();
+  }
+  return mudancas;
+}
+
+export interface ReescritaLink {
+  caminho: string;
+  blobSha: string;
+  texto: string;
+  tinhaBom: boolean;
+  quantidade: number;
+}
+
+export interface PlanoRenomeacao {
+  caminhos: Map<string, string>;
+  reescritas: ReescritaLink[];
+  reescritos: number;
+  ignorados: number;
+}
+
+// A resolução atual usa só o nome. Havendo homônimos, não escolhemos um deles.
+export async function analisarRenomeacao(
+  token: string, origem: OrigemMovimento, nome: string,
+  blobs: ReadonlyMap<string, string>, fetcher: Fetcher = fetch,
+): Promise<PlanoRenomeacao> {
+  const caminhos = planejarRenomeacao(origem, nome, blobs);
+  const plano: PlanoRenomeacao = { caminhos, reescritas: [], reescritos: 0, ignorados: 0 };
+  if (origem.tipo !== 'nota') return plano;
+  const nomeAntigo = nomeDaNota(origem.caminho).toLocaleLowerCase('pt-BR');
+  const nomeNovo = nomeDaNota(caminhos.get(origem.caminho) as string);
+  const ambiguo = [...blobs.keys()].filter((caminho) => nomeDaNota(caminho).toLocaleLowerCase('pt-BR') === nomeAntigo).length !== 1
+    || [...blobs.keys()].some((caminho) => caminho !== origem.caminho && nomeDaNota(caminho).toLocaleLowerCase('pt-BR') === nomeNovo.toLocaleLowerCase('pt-BR'));
+  // Limitar concorrência evita rajadas de 139 pedidos no vault maior.
+  const entradas = [...blobs.entries()];
+  for (let i = 0; i < entradas.length; i += 8) {
+    await Promise.all(entradas.slice(i, i + 8).map(async ([caminho, blobSha]) => {
+      validarCaminho(caminho);
+      const dados = await requisitar(fetcher, token, `${API}/git/blobs/${blobSha}`);
+      if (typeof dados.content !== 'string') throw new ErroGitHub(502, 'Blob sem conteúdo.');
+      const nota = decodificarBase64(dados.content);
+      let quantidade = 0;
+      const texto = nota.texto.replace(/(!?\[\[)([^\]\r\n]+)(\]\])/g, (inteiro, abertura: string, bruto: string, fechamento: string) => {
+        const alvo = analisarAlvo(bruto, abertura.startsWith('!'));
+        if (alvo.alvo.split('/').at(-1)?.replace(/\.md$/i, '').toLocaleLowerCase('pt-BR') !== nomeAntigo) return inteiro;
+        if (ambiguo || nota.somenteLeitura) { plano.ignorados += 1; return inteiro; }
+        quantidade += 1;
+        const divisor = bruto.indexOf('|');
+        const comAlias = divisor < 0 ? bruto : bruto.slice(0, divisor);
+        const resto = divisor < 0 ? '' : bruto.slice(divisor);
+        const secao = comAlias.indexOf('#');
+        const semSecao = secao < 0 ? comAlias : comAlias.slice(0, secao);
+        const sufixo = secao < 0 ? '' : comAlias.slice(secao);
+        const barra = semSecao.lastIndexOf('/');
+        const prefixo = barra < 0 ? '' : semSecao.slice(0, barra + 1);
+        const espacoInicial = semSecao.slice(barra + 1).match(/^\s*/)?.[0] ?? '';
+        const espaco = semSecao.match(/\s*$/)?.[0] ?? '';
+        const extensao = /\.md\s*$/i.test(semSecao) ? '.md' : '';
+        return `${abertura}${prefixo}${espacoInicial}${nomeNovo}${extensao}${espaco}${sufixo}${resto}${fechamento}`;
+      });
+      if (quantidade) {
+        plano.reescritos += quantidade;
+        plano.reescritas.push({ caminho, blobSha, texto, tinhaBom: nota.tinhaBom, quantidade });
+      }
+    }));
+  }
+  return plano;
+}
+
+export interface ResultadoRenomeacao extends ResultadoMovimento {
+  blobsReescritos: Map<string, string>;
+}
+
+export async function renomear(
+  token: string, origem: OrigemMovimento, plano: PlanoRenomeacao,
+  blobs: ReadonlyMap<string, string>, treeShaConhecido: string,
+  fetcher: Fetcher = fetch,
+): Promise<ResultadoRenomeacao> {
+  for (const [antigo, novo] of plano.caminhos) {
+    validarCaminho(antigo); validarCaminho(novo);
+    if (blobs.has(novo) && !plano.caminhos.has(novo)) throw new CaminhoExistente();
+  }
+  if (!treeShaConhecido) throw new Error('SHA da árvore indisponível. Recarregue a lista.');
+  const ref = await requisitar(fetcher, token, `${API}/git/ref/heads/${BRANCH}`);
+  const commitAtual = shaDe(ref.object as Record<string, unknown>);
+  const commit = await requisitar(fetcher, token, `${API}/git/commits/${commitAtual}`);
+  const arvoreAtual = shaDe(commit.tree as Record<string, unknown>);
+  if (arvoreAtual !== treeShaConhecido) throw new ConflitoGitHub();
+  const novosShas = new Map<string, string>();
+  for (const item of plano.reescritas) {
+    validarCaminho(item.caminho);
+    if (blobs.get(item.caminho) !== item.blobSha) throw new ConflitoGitHub();
+    const criado = await requisitar(fetcher, token, `${API}/git/blobs`, 'POST', {
+      content: codificarBase64(item.texto, item.tinhaBom), encoding: 'base64',
+    });
+    novosShas.set(item.caminho, shaDe(criado));
+  }
+  const entradas: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string | null }> = [];
+  for (const [antigo, novo] of plano.caminhos) {
+    entradas.push({ path: antigo, mode: '100644', type: 'blob', sha: null });
+    entradas.push({ path: novo, mode: '100644', type: 'blob', sha: novosShas.get(antigo) ?? blobs.get(antigo) as string });
+  }
+  for (const [caminho, sha] of novosShas) {
+    if (!plano.caminhos.has(caminho)) entradas.push({ path: caminho, mode: '100644', type: 'blob', sha });
+  }
+  const arvore = await requisitar(fetcher, token, `${API}/git/trees`, 'POST', { base_tree: arvoreAtual, tree: entradas });
+  const novaArvore = shaDe(arvore);
+  const nomeNovo = origem.tipo === 'nota' ? plano.caminhos.get(origem.caminho) : [...plano.caminhos.values()][0];
+  const novoCommit = await requisitar(fetcher, token, `${API}/git/commits`, 'POST', {
+    message: `notas-web: renomear ${origem.caminho} → ${nomeNovo}`,
+    tree: novaArvore, parents: [commitAtual],
+  });
+  await requisitar(fetcher, token, `${API}/git/refs/heads/${BRANCH}`, 'PATCH', { sha: shaDe(novoCommit) });
+  return { caminhos: plano.caminhos, treeSha: novaArvore, blobsReescritos: novosShas };
 }
 
 export function planejarMovimento(

@@ -59,6 +59,7 @@ export function criarLateral(
   aoAbrirPasta: (caminho: string) => void,
   abertaPadrao = true,
   aoMover?: (origem: OrigemMovimento, destino?: string) => void,
+  aoRenomear?: (origem: OrigemMovimento) => void,
 ): Lateral {
   let arvore = arvoreInicial;
   const estado = lerEstadoLateral(storage, arvore, abertaPadrao);
@@ -100,6 +101,7 @@ export function criarLateral(
     for (const [rotulo, acao] of [
       ['Abrir', () => origem.tipo === 'nota' ? aoAbrirNota(origem.caminho) : aoAbrirPasta(origem.caminho)],
       ['Mover para…', () => aoMover?.(origem)],
+      ['Renomear', () => aoRenomear?.(origem)],
     ] as const) {
       const botao = document.createElement('button');
       botao.type = 'button';

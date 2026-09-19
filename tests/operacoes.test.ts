@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CaminhoExistente, ConflitoGitHub, listarNotasComSha } from '../src/github';
-import { mover, planejarMovimento } from '../src/operacoes';
+import { analisarRenomeacao, mover, planejarMovimento, planejarRenomeacao, renomear } from '../src/operacoes';
 
 const P = '06_Conhecimento/';
 
@@ -106,5 +106,66 @@ describe('handoff 07 · fatia 1, somente Fetcher injetado', () => {
     expect([...lista.blobs]).toEqual([[`${P}A.md`, 'blob-a'], [`${P}B.md`, 'blob-b']]);
     expect(lista.treeSha).toBe('tree-1');
     expect(mock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('handoff 07 · fatia 2, renomear e wikilinks', () => {
+  const alvo = `${P}A/Antiga.md`;
+  const origemLinks = `${P}B/Referências.md`;
+
+  function mockRenomear(conteudos: Map<string, string>): typeof fetch {
+    let blobNovo = 0;
+    return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const endereco = String(url);
+      const metodo = init?.method ?? 'GET';
+      if (endereco.includes('/git/blobs/') && metodo === 'GET') {
+        const sha = endereco.split('/').at(-1) as string;
+        return resposta({ content: Buffer.from(conteudos.get(sha) as string, 'utf8').toString('base64') });
+      }
+      if (endereco.endsWith('/git/blobs') && metodo === 'POST') return resposta({ sha: `blob-novo-${++blobNovo}` });
+      if (endereco.includes('/git/ref/heads/') && metodo === 'GET') return resposta({ object: { sha: 'commit-antigo' } });
+      if (endereco.includes('/git/commits/') && metodo === 'GET') return resposta({ tree: { sha: 'tree-antiga' } });
+      if (endereco.endsWith('/git/trees') && metodo === 'POST') return resposta({ sha: 'tree-nova' });
+      if (endereco.endsWith('/git/commits') && metodo === 'POST') return resposta({ sha: 'commit-novo' });
+      if (endereco.includes('/git/refs/heads/') && metodo === 'PATCH') return resposta({});
+      return resposta({}, 404);
+    }) as unknown as typeof fetch;
+  }
+
+  it('128. reescreve 169 links em um commit e preserva BOM, CRLF e fim de arquivo', async () => {
+    const blobs = new Map([[alvo, 'sha-alvo'], [origemLinks, 'sha-links']]);
+    const texto = `\uFEFF# Referências\r\n${'[[Antiga#Seção|apelido]]\r\n'.repeat(169)}fim`;
+    const mock = mockRenomear(new Map([['sha-alvo', '# Antiga\n'], ['sha-links', texto]]));
+    const plano = await analisarRenomeacao('x', { tipo: 'nota', caminho: alvo }, 'Nova', blobs, mock);
+    expect(plano.reescritos).toBe(169);
+    expect(plano.ignorados).toBe(0);
+    expect(plano.reescritas[0].texto).toBe(texto.slice(1).replaceAll('[[Antiga', '[[Nova'));
+    const resultado = await renomear('x', { tipo: 'nota', caminho: alvo }, plano, blobs, 'tree-antiga', mock);
+    expect(resultado.caminhos.get(alvo)).toBe(`${P}A/Nova.md`);
+    const chamadas = vi.mocked(mock).mock.calls;
+    const criacoes = chamadas.filter(([url, init]) => String(url).endsWith('/git/blobs') && init?.method === 'POST');
+    expect(criacoes).toHaveLength(1);
+    expect(Buffer.from(JSON.parse(String(criacoes[0][1]?.body)).content, 'base64').toString()).toBe(texto.replaceAll('[[Antiga', '[[Nova'));
+    expect(chamadas.filter(([url, init]) => String(url).endsWith('/git/commits') && init?.method === 'POST')).toHaveLength(1);
+    expect(JSON.parse(String(chamadas.at(-1)?.[1]?.body))).toEqual({ sha: 'commit-novo' });
+  });
+
+  it('129 e 131. links ambíguos e CR isolado ficam fora da reescrita e são contados', async () => {
+    const ambiguos = new Map([[alvo, 'sha-alvo'], [`${P}C/Antiga.md`, 'sha-homonimo'], [origemLinks, 'sha-links']]);
+    const mockAmbiguo = mockRenomear(new Map([['sha-alvo', ''], ['sha-homonimo', ''], ['sha-links', '[[Antiga]] [[Antiga]]']]));
+    const planoAmbiguo = await analisarRenomeacao('x', { tipo: 'nota', caminho: alvo }, 'Nova', ambiguos, mockAmbiguo);
+    expect([planoAmbiguo.reescritos, planoAmbiguo.ignorados]).toEqual([0, 2]);
+    const simples = new Map([[alvo, 'sha-alvo'], [origemLinks, 'sha-links']]);
+    const mockCr = mockRenomear(new Map([['sha-alvo', ''], ['sha-links', 'linha\r[[Antiga]]']]));
+    const planoCr = await analisarRenomeacao('x', { tipo: 'nota', caminho: alvo }, 'Nova', simples, mockCr);
+    expect([planoCr.reescritos, planoCr.ignorados, planoCr.reescritas.length]).toEqual([0, 1, 0]);
+  });
+
+  it('130. só trocar maiúscula é renomeação real; destino ocupado e caminhos inválidos são recusados', () => {
+    const blobs = new Map([[alvo, 'sha-alvo']]);
+    expect(planejarRenomeacao({ tipo: 'nota', caminho: alvo }, 'ANTIGA', blobs).get(alvo)).toBe(`${P}A/ANTIGA.md`);
+    expect(() => planejarRenomeacao({ tipo: 'nota', caminho: alvo }, '../fora', blobs)).toThrow();
+    expect(() => planejarRenomeacao({ tipo: 'nota', caminho: alvo }, 'B\\C', blobs)).toThrow();
+    expect(() => planejarRenomeacao({ tipo: 'nota', caminho: alvo }, 'Usada', new Map([...blobs, [`${P}A/Usada.md`, 'sha-2']]))).toThrow(CaminhoExistente);
   });
 });
