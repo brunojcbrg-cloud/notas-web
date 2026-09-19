@@ -5,3 +5,4 @@ node_modules/
 HANDOFF_*.md
 RELATORIO_*.md
 *.tsbuildinfo
+__pycache__/

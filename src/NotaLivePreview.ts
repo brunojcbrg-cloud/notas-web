@@ -21,13 +21,8 @@ import {
   WidgetType,
 } from '@codemirror/view';
 
-const MARCAS_DISCRETAS = new Set([
-  'HeaderMark',
-  'EmphasisMark',
-  'CodeMark',
-  'QuoteMark',
-  'LinkMark',
-]);
+const MARCAS_OCULTAVEIS = new Set(['HeaderMark', 'EmphasisMark', 'CodeMark', 'QuoteMark']);
+const MARCAS_VISIVEIS = new Set(['LinkMark']);
 
 const BOLINHAS = ['•', '◦', '▪'] as const;
 
@@ -97,14 +92,19 @@ export function livePreview(): Extension {
       construir(view: EditorView): DecorationSet {
         const { state } = view;
         const ranges: Range<Decoration>[] = [];
+        const substituicoes: Range<Decoration>[] = [];
         const nivelDeLista = new Map<number, number>();
+        const arvore = syntaxTree(state);
 
         for (const visivel of view.visibleRanges) {
-          syntaxTree(state).iterate({
+          arvore.iterate({
             from: visivel.from,
             to: visivel.to,
             enter: (no) => {
               const linha = state.doc.lineAt(no.from);
+              const linhaTocada = state.selection.ranges.some(
+                (selecao) => selecao.from <= linha.to && selecao.to >= linha.from,
+              );
 
               if (/^ATXHeading[1-6]$/.test(no.name)) {
                 const nivel = Number(no.name.slice(-1));
@@ -140,13 +140,11 @@ export function livePreview(): Extension {
 
               if (no.name === 'ListMark') {
                 const { nivel, tipo } = contextoDeLista(no.node);
-                const linhaTocada = state.selection.ranges.some(
-                  (selecao) => selecao.from <= linha.to && selecao.to >= linha.from,
-                );
                 if (tipo === 'BulletList' && !linhaTocada) {
-                  ranges.push(
-                    Decoration.replace({ widget: new BolinhaLista(nivel) }).range(no.from, no.to),
-                  );
+                  const substituicao = Decoration.replace({ widget: new BolinhaLista(nivel) })
+                    .range(no.from, no.to);
+                  ranges.push(substituicao);
+                  substituicoes.push(substituicao);
                 } else {
                   ranges.push(
                     Decoration.mark({ class: 'cm-lp-marcador' }).range(no.from, no.to),
@@ -155,7 +153,33 @@ export function livePreview(): Extension {
                 return undefined;
               }
 
-              if (MARCAS_DISCRETAS.has(no.name)) {
+              if (no.name === 'HorizontalRule') {
+                ranges.push(
+                  Decoration.line({ attributes: { class: 'cm-lp-separador' } }).range(linha.from),
+                );
+                return undefined;
+              }
+
+              if (MARCAS_OCULTAVEIS.has(no.name)) {
+                if (no.name === 'CodeMark' && no.node.parent?.name !== 'InlineCode') return undefined;
+                let fim = no.to;
+                if (no.name === 'HeaderMark' || no.name === 'QuoteMark') {
+                  while (fim < linha.to && /\s/.test(state.doc.sliceString(fim, fim + 1))) fim += 1;
+                }
+                if (!linhaTocada && no.from >= linha.from && fim <= linha.to &&
+                    !(no.from === linha.from && fim === linha.to)) {
+                  const substituicao = Decoration.replace({}).range(no.from, fim);
+                  ranges.push(substituicao);
+                  substituicoes.push(substituicao);
+                } else {
+                  ranges.push(
+                    Decoration.mark({ class: 'cm-lp-marcador' }).range(no.from, no.to),
+                  );
+                }
+                return undefined;
+              }
+
+              if (MARCAS_VISIVEIS.has(no.name)) {
                 ranges.push(
                   Decoration.mark({ class: 'cm-lp-marcador' }).range(no.from, no.to),
                 );
@@ -183,7 +207,16 @@ export function livePreview(): Extension {
         const construtor = new RangeSetBuilder<Decoration>();
         ranges
           .sort((a, b) => a.from - b.from || a.value.startSide - b.value.startSide)
-          .forEach((range) => construtor.add(range.from, range.to, range.value));
+          .forEach((range) => {
+            if (range.from < range.to && substituicoes.some((outra) => {
+              if (outra === range || range.from >= outra.to || range.to <= outra.from) return false;
+              // Uma marca pode envolver a substituição: é assim que negrito,
+              // itálico e código continuam estilizando o texto entre delimitadores.
+              return substituicoes.includes(range) ||
+                range.from > outra.from || range.to < outra.to;
+            })) return;
+            construtor.add(range.from, range.to, range.value);
+          });
         return construtor.finish();
       }
     },

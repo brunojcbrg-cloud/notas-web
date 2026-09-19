@@ -197,6 +197,20 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .cm-editor .cm-line.cm-lp-lista { padding-left: calc(0.45em + (var(--nivel) - 1) * 0.75em); }
 .cm-editor .cm-lp-bolinha { display: inline-block; width: 1ch; color: var(--md-list-marker); text-align: center; }
 .cm-editor .cm-line.cm-lp-citacao { padding-left: 40px; color: var(--md-quote); box-shadow: inset 3px 0 var(--md-quote); }
+.editor-host[data-modo="preview"] .cm-editor { font-family: Georgia, serif; font-size: 17px; line-height: 1.72; }
+.editor-host[data-modo="preview"] .cm-content { width: 100%; max-width: 860px; margin-inline: auto; padding: 44px 32px 140px; }
+.editor-host[data-modo="preview"] .cm-line { padding-inline: 0; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-titulo { padding-top: 1.8em; padding-bottom: 0.6em; line-height: 1.2; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-h1 { color: var(--md-h1); font-size: 34px; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-h2 { padding-bottom: calc(0.6em + 8px); color: var(--md-h2); font-size: 27px; border-bottom: 1px solid var(--linha); }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-h3 { color: var(--md-h3); font-size: 21px; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-h4 { color: var(--md-h4); font-size: 17px; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-h5 { color: var(--md-h4); font-size: 14.11px; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-h6 { color: var(--md-h4); font-size: 11.39px; }
+.editor-host[data-modo="preview"] .cm-lp-codigo,
+.editor-host[data-modo="preview"] .cm-line.cm-lp-cerca { font-family: Consolas, monospace; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-lista { padding-left: calc(24px + (var(--nivel) - 1) * 24px); text-indent: -20px; }
+.editor-host[data-modo="preview"] .cm-line.cm-lp-separador { border-bottom: 1px solid var(--linha); }
 
 .dialogo { width: min(100% - 32px, 560px); padding: 0; color: var(--grafite); background: var(--folha); border: 0; border-radius: 14px; box-shadow: 0 24px 80px var(--sombra-dialogo); }
 .dialogo::backdrop { background: var(--fundo-backdrop); backdrop-filter: blur(3px); }

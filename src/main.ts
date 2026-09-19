@@ -46,6 +46,7 @@ if (!raiz) throw new Error('Contêiner principal ausente.');
 const midiaEscura = window.matchMedia('(prefers-color-scheme: dark)');
 const compartimentoTema = new Compartment();
 const compartimentoPreview = new Compartment();
+const compartimentoNumeros = new Compartment();
 let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
 let caminhos: string[] = [];
@@ -516,6 +517,7 @@ function mostrarNota(
 
   const area = elemento('section', 'area-nota');
   const editorHost = elemento('div', 'editor-host');
+  editorHost.dataset.modo = modoInicial === 'preview' ? 'preview' : 'fonte';
   const leituraHost = elemento('article', 'leitura-markdown');
   leituraHost.hidden = true;
   area.append(editorHost, leituraHost);
@@ -530,7 +532,7 @@ function mostrarNota(
   };
 
   const extensoes = [
-    lineNumbers(),
+    compartimentoNumeros.of(modoInicial === 'preview' ? [] : lineNumbers()),
     history(),
     markdown(),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
@@ -567,6 +569,8 @@ function mostrarNota(
   };
   const ativarFonte = (): void => {
     if (editor) configurarLivePreview(editor, compartimentoPreview, false);
+    editor?.dispatch({ effects: compartimentoNumeros.reconfigure(lineNumbers()) });
+    editorHost.dataset.modo = 'fonte';
     editorHost.hidden = false;
     leituraHost.hidden = true;
     marcarModo(fonte);
@@ -574,6 +578,8 @@ function mostrarNota(
   };
   const ativarPreview = (): void => {
     if (editor) configurarLivePreview(editor, compartimentoPreview, true);
+    editor?.dispatch({ effects: compartimentoNumeros.reconfigure([]) });
+    editorHost.dataset.modo = 'preview';
     editorHost.hidden = false;
     leituraHost.hidden = true;
     marcarModo(preview);

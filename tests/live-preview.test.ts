@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { markdown } from '@codemirror/lang-markdown';
-import { Compartment, EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { history, undo } from '@codemirror/commands';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { EditorView, lineNumbers } from '@codemirror/view';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { configurarLivePreview, livePreview } from '../src/NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from '../src/NotaBytes';
+import { codificarBase64, codificarEstado, decodificarBase64 } from '../src/bytes';
 
 let view: EditorView | null = null;
 
@@ -26,6 +28,7 @@ function criarEditor(
   eol: 'lf' | 'crlf' | 'misto',
   preview: Compartment,
   aoVivo = false,
+  extras: Extension[] = [],
 ): EditorView {
   const host = document.createElement('div');
   document.body.append(host);
@@ -36,6 +39,7 @@ function criarEditor(
         markdown(),
         preservarQuebras(texto, eol),
         preview.of(aoVivo ? livePreview() : []),
+        ...extras,
       ],
     }),
     parent: host,
@@ -222,5 +226,148 @@ describe('casos 71–79 · marcadores de lista no live preview', () => {
     });
 
     expect(textoExato(editor.state)).toBe('- um\r\n- DOIS\r\nfim\r\n');
+  });
+});
+
+describe('casos 83–100 · Ao vivo igual Leitura', () => {
+  it('83. salvar sem editar uma nota de 88 KB preserva os bytes', () => {
+    const original = ('# Aula\r\n- **forte** e *itálico*\r\n').repeat(3000);
+    expect(new TextEncoder().encode(original).length).toBeGreaterThan(88_000);
+    const preview = new Compartment();
+    const editor = criarEditor(original, 'crlf', preview, true);
+    expect(new TextEncoder().encode(textoExato(editor.state))).toEqual(new TextEncoder().encode(original));
+  });
+
+  it('84. forte, itálico e código fora da linha conservam o estilo sem delimitadores', () => {
+    const original = '**forte** e *itálico* e `código`\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+    expect(document.querySelector('.cm-lp-forte')?.textContent).toBe('forte');
+    expect(document.querySelector('.cm-lp-enfase')?.textContent).toBe('itálico');
+    expect(document.querySelector('.cm-lp-codigo')?.textContent).toBe('código');
+    const texto = document.querySelector('.cm-content')?.textContent;
+    expect(texto).not.toContain('**forte**');
+    expect(texto).not.toContain('*itálico*');
+    expect(texto).not.toContain('`código`');
+  });
+
+  it('85. forte na linha do cursor mantém asteriscos editáveis', () => {
+    const editor = criarEditor('**forte**\nfim', 'lf', new Compartment(), true);
+    expect(document.querySelector('.cm-content')?.textContent).toContain('**forte**');
+    expect(document.querySelectorAll('.cm-lp-marcador')).toHaveLength(2);
+  });
+
+  it('86. título fora do cursor não deixa cerquilha nem espaço inicial', () => {
+    const original = '# Título\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+    expect(document.querySelector('.cm-lp-h1')?.textContent).toBe('Título');
+  });
+
+  it('87. linha só com cerquilha continua visível e alcançável', () => {
+    const original = '#\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+    expect(document.querySelector('.cm-content')?.textContent).toContain('#');
+    editor.dispatch({ selection: { anchor: 0 } });
+    expect(editor.state.selection.main.head).toBe(0);
+  });
+
+  it('88. seleção de três linhas revela todas as marcas cruas', () => {
+    const original = '# Título\n**forte**\n> citação\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    editor.dispatch({ selection: { anchor: 2, head: original.indexOf('fim') - 1 } });
+    const texto = document.querySelector('.cm-content')?.textContent ?? '';
+    expect(texto).toContain('# Título');
+    expect(texto).toContain('**forte**');
+    expect(texto).toContain('> citação');
+  });
+
+  it('89. marcas aninhadas não conflitam no RangeSetBuilder', () => {
+    const original = '# *ênfase*\n- **forte**\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    expect(() => editor.dispatch({ selection: { anchor: original.indexOf('fim') } })).not.toThrow();
+    expect(document.querySelector('.cm-lp-enfase')?.textContent).toBe('ênfase');
+    expect(document.querySelector('.cm-lp-forte')?.textContent).toBe('forte');
+    expect(document.querySelector('.cm-lp-bolinha')).not.toBeNull();
+  });
+
+  it('90. asteriscos em cerca e código em linha permanecem literais', () => {
+    const original = '```\n**bloco**\n```\n`**inline**`\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+    const texto = document.querySelector('.cm-content')?.textContent ?? '';
+    expect(texto).toContain('**bloco**');
+    expect(texto).toContain('**inline**');
+    expect(editor.state.doc.toString()).toBe(original);
+  });
+
+  it('91. Fonte, Ao vivo e Leitura conservam documento, cursor e histórico', () => {
+    const preview = new Compartment();
+    const editor = criarEditor('um\ndois', 'lf', preview, false, [history()]);
+    editor.dispatch({ changes: { from: 2, insert: 'X' }, selection: { anchor: 3 } });
+    const salvo = editor.state.doc.toString();
+    configurarLivePreview(editor, preview, true);
+    configurarLivePreview(editor, preview, false);
+    configurarLivePreview(editor, preview, true);
+    expect(editor.state.doc.toString()).toBe(salvo);
+    expect(editor.state.selection.main.head).toBe(3);
+    expect(undo({ state: editor.state, dispatch: (tr) => editor.dispatch(tr) })).toBe(true);
+    expect(editor.state.doc.toString()).toBe('um\ndois');
+  });
+
+  it('93. compartimento tira números no Ao vivo e devolve no Fonte', () => {
+    const numeros = new Compartment();
+    const editor = criarEditor('um\ndois', 'lf', new Compartment(), true, [numeros.of(lineNumbers())]);
+    expect(document.querySelector('.cm-lineNumbers')).not.toBeNull();
+    editor.dispatch({ effects: numeros.reconfigure([]) });
+    expect(document.querySelector('.cm-lineNumbers')).toBeNull();
+    editor.dispatch({ effects: numeros.reconfigure(lineNumbers()) });
+    expect(document.querySelector('.cm-lineNumbers')).not.toBeNull();
+  });
+
+  it('96. lista longa tem três níveis e regra de recuo pendente', () => {
+    const original = '- um texto longo\n  - dois texto longo\n    - três texto longo\nfim';
+    const editor = criarEditor(original, 'lf', new Compartment(), true);
+    editor.dispatch({ selection: { anchor: original.indexOf('fim') } });
+    const linhas = [...document.querySelectorAll<HTMLElement>('.cm-line.cm-lp-lista')];
+    expect(linhas.map((linha) => linha.style.getPropertyValue('--nivel').trim())).toEqual(['1', '2', '3']);
+    const css = readFileSync('src/style.css', 'utf8');
+    expect(css).toContain('text-indent: -20px');
+    expect(css).toContain('calc(24px + (var(--nivel) - 1) * 24px)');
+  });
+
+  it('97. editar com marcas ocultas conserva CRLF', () => {
+    const original = '**forte**\r\nlinha\r\nfim';
+    const editor = criarEditor(original, 'crlf', new Compartment(), true);
+    const inicio = editor.state.doc.toString().indexOf('linha');
+    editor.dispatch({ changes: { from: inicio, to: inicio + 5, insert: 'LINHA' } });
+    expect(textoExato(editor.state)).toBe('**forte**\r\nLINHA\r\nfim');
+  });
+
+  it('98. CR isolado abre no Ao vivo e recusa salvamento', () => {
+    const nota = decodificarBase64(codificarBase64('**forte**\rtexto\nfim', false));
+    expect(nota.somenteLeitura).toBe(true);
+    const editor = criarEditor(nota.texto, nota.eol, new Compartment(), true, [EditorView.editable.of(false)]);
+    editor.dispatch({ selection: { anchor: nota.texto.length } });
+    expect(document.querySelector('.cm-lp-forte')).not.toBeNull();
+    expect(editor.state.facet(EditorView.editable)).toBe(false);
+    expect(() => codificarEstado(editor.state, nota.tinhaBom, nota.somenteLeitura)).toThrow('CR isolado');
+  });
+
+  it('99. casos 1–82 permanecem registrados nas suítes e no Edge', () => {
+    const fontes = readdirSync('tests').filter((nome) => nome.endsWith('.test.ts'))
+      .map((nome) => readFileSync(`tests/${nome}`, 'utf8'));
+    fontes.push(readFileSync('scripts/verificar-web-e2e.py', 'utf8'));
+    const todos = fontes.join('\n');
+    for (let caso = 1; caso <= 82; caso += 1) expect(todos).toMatch(new RegExp(`\\b${caso}\\.`));
+  });
+
+  it('100. auditoria inclui todos os arquivos e exige zero erros de coleta', () => {
+    const arquivos = readdirSync('tests').filter((nome) => nome.endsWith('.test.ts'));
+    const reporter = readFileSync('scripts/test-audit-reporter.mjs', 'utf8');
+    expect(arquivos).toHaveLength(9);
+    expect(reporter).toContain('carregados !== emDisco');
+    expect(reporter).toContain('erros.length !== 0');
   });
 });
