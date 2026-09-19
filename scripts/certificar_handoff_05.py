@@ -193,5 +193,5 @@ def certificar(navegador, url: str) -> bool:
     contexto.close()
 
     # 99 e 100 são certificados pelo npm test e pelo reporter de coleta.
-    print("INFO 99–100. execute npm test; a saída audita os casos 1–82, os 9 arquivos e Errors 0")
+    print("INFO 99–100. execute npm test; a saída audita os casos 1–82, os 10 arquivos e Errors 0")
     return not falhas

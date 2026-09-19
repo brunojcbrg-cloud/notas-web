@@ -15,6 +15,7 @@ import {
   type NotaRemota,
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
+import { criarLateral, type Lateral } from './lateral';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
 import { configurarLivePreview, livePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
@@ -59,6 +60,14 @@ let estadoSalvo: EditorState | null = null;
 let textoSalvoAtual: string | null = null;
 let salvando = false;
 let pararBloqueio: (() => void) | null = null;
+let casca: HTMLElement | null = null;
+let conteudo: HTMLElement | null = null;
+let lateral: Lateral | null = null;
+let botaoLateral: HTMLButtonElement | null = null;
+let botaoVoltar: HTMLButtonElement | null = null;
+let subtituloCabecalho: HTMLElement | null = null;
+let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' = 'entrada';
+let sequenciaAbertura = 0;
 
 interface RascunhoMemoria {
   nota: NotaRemota;
@@ -88,7 +97,39 @@ function limpar(): void {
   editor?.destroy();
   editor = null;
   estadoSalvo = null;
-  raiz.replaceChildren();
+  conteudo?.replaceChildren();
+}
+
+function confirmarDescarte(): boolean {
+  return !temAlteracoes() || window.confirm('Descartar as alterações não gravadas?');
+}
+
+function telaPequena(): boolean {
+  return window.matchMedia('(max-width: 680px)').matches;
+}
+
+function sincronizarLateral(): void {
+  if (!casca || !lateral || !botaoLateral) return;
+  const aberta = lateral.aberta();
+  casca.classList.toggle('lateral-aberta', aberta);
+  lateral.elemento.hidden = !aberta;
+  botaoLateral.setAttribute('aria-expanded', String(aberta));
+  botaoLateral.setAttribute('aria-label', aberta ? 'Fechar coluna lateral' : 'Abrir coluna lateral');
+  const fundo = casca.querySelector<HTMLButtonElement>('.lateral-fundo');
+  if (fundo) fundo.hidden = !aberta || !telaPequena();
+}
+
+function definirLateralAberta(aberta: boolean): void {
+  lateral?.definirAberta(aberta);
+  sincronizarLateral();
+}
+
+function atualizarCabecalho(subtitulo: string, mostrarVoltar = false): void {
+  if (subtituloCabecalho) {
+    subtituloCabecalho.textContent = subtitulo;
+    subtituloCabecalho.hidden = !subtitulo;
+  }
+  if (botaoVoltar) botaoVoltar.hidden = !mostrarVoltar;
 }
 
 function sistemaEscuro(): boolean {
@@ -149,6 +190,7 @@ function seletoresTema(): HTMLElement {
 }
 
 function encerrarSessao(): void {
+  sequenciaAbertura += 1;
   pararBloqueio?.();
   pararBloqueio = null;
   sair(sessionStorage);
@@ -162,7 +204,7 @@ function botaoSair(): HTMLButtonElement {
   const botao = elemento('button', 'botao botao-sutil', 'Sair');
   botao.type = 'button';
   botao.addEventListener('click', () => {
-    if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
+    if (!confirmarDescarte()) return;
     rascunhoMemoria = null;
     encerrarSessao();
     mostrarEntrada();
@@ -170,16 +212,76 @@ function botaoSair(): HTMLButtonElement {
   return botao;
 }
 
-function cabecalho(titulo: string, subtitulo?: string): HTMLElement {
+function cabecalho(): HTMLElement {
   const header = elemento('header', 'cabecalho');
+  botaoLateral = elemento('button', 'botao botao-sutil botao-lateral', '☰');
+  botaoLateral.type = 'button';
+  botaoLateral.setAttribute('aria-controls', 'explorador-notas');
+  botaoLateral.addEventListener('click', () => definirLateralAberta(!lateral?.aberta()));
+  botaoVoltar = elemento('button', 'botao botao-sutil botao-voltar', '← Pasta');
+  botaoVoltar.type = 'button';
+  botaoVoltar.hidden = true;
+  botaoVoltar.addEventListener('click', () => {
+    if (!confirmarDescarte()) return;
+    pastaAtual = pastaRetorno;
+    mostrarLista();
+  });
   const marca = elemento('div', 'marca');
-  marca.append(elemento('span', 'marca-sinal', '06'), elemento('strong', '', titulo));
-  if (subtitulo) marca.append(elemento('span', 'caminho', subtitulo));
+  marca.append(elemento('span', 'marca-sinal', '06'), elemento('strong', '', 'Conhecimento'));
+  subtituloCabecalho = elemento('span', 'caminho');
+  subtituloCabecalho.hidden = true;
+  marca.append(subtituloCabecalho);
   const acoes = elemento('div', 'cabecalho-acoes');
   acoes.append(seletoresTema(), botaoSair());
-  header.append(marca, acoes);
+  header.append(botaoLateral, botaoVoltar, marca, acoes);
   return header;
 }
+
+function montarCasca(): void {
+  if (casca) return;
+  casca = elemento('div', 'app-shell');
+  const header = cabecalho();
+  const corpo = elemento('div', 'app-corpo');
+  lateral = criarLateral(
+    arvore,
+    localStorage,
+    (caminho) => {
+      if (telaAtual === 'nota' && nota?.caminho === caminho) {
+        if (telaPequena()) definirLateralAberta(false);
+        return;
+      }
+      if (!confirmarDescarte()) return;
+      pastaAtual = pastaDaNota(caminho);
+      if (telaPequena()) definirLateralAberta(false);
+      void abrirNota(caminho, '', 'fonte', pastaAtual);
+    },
+    (caminho) => {
+      pastaAtual = caminho;
+      if (telaAtual === 'lista') mostrarLista('', false);
+    },
+    !telaPequena(),
+  );
+  lateral.elemento.id = 'explorador-notas';
+  conteudo = elemento('main', 'app-conteudo');
+  corpo.append(lateral.elemento, conteudo);
+  const fundo = elemento('button', 'lateral-fundo');
+  fundo.type = 'button';
+  fundo.setAttribute('aria-label', 'Fechar coluna lateral');
+  fundo.addEventListener('click', () => {
+    definirLateralAberta(false);
+    botaoLateral?.focus();
+  });
+  casca.append(header, corpo, fundo);
+  raiz.replaceChildren(casca);
+  sincronizarLateral();
+}
+
+window.addEventListener('keydown', (evento) => {
+  if (evento.key !== 'Escape' || !telaPequena() || !lateral?.aberta()) return;
+  definirLateralAberta(false);
+  botaoLateral?.focus();
+});
+window.addEventListener('resize', sincronizarLateral);
 
 function capturarRascunho(): boolean {
   if (!temAlteracoes() || !editor || !nota) return true;
@@ -211,6 +313,14 @@ function iniciarBloqueio(): void {
 
 function mostrarEntrada(mensagem = ''): void {
   limpar();
+  raiz.replaceChildren();
+  casca = null;
+  conteudo = null;
+  lateral = null;
+  botaoLateral = null;
+  botaoVoltar = null;
+  subtituloCabecalho = null;
+  telaAtual = 'entrada';
   const pagina = elemento('main', 'entrada');
   const painel = elemento('section', 'entrada-painel');
   painel.append(
@@ -277,24 +387,30 @@ async function abrirNota(
   retorno = pastaAtual,
 ): Promise<void> {
   if (!token) return mostrarEntrada();
+  const abertura = ++sequenciaAbertura;
   pastaRetorno = retorno;
   mostrarCarregando(caminho);
   try {
-    nota = await lerNota(token, caminho);
+    const carregada = await lerNota(token, caminho);
+    if (abertura !== sequenciaAbertura) return;
+    nota = carregada;
     mostrarNota(modoInicial, secao);
   } catch (erro) {
+    if (abertura !== sequenciaAbertura) return;
     mostrarLista(erroSeguro(erro));
   }
 }
 
 function mostrarCarregando(caminho: string): void {
   limpar();
-  const pagina = elemento('main', 'app-shell');
-  pagina.append(cabecalho('Conhecimento', caminho));
+  montarCasca();
+  telaAtual = 'carregando';
+  casca?.classList.remove('nota-ativa');
+  atualizarCabecalho(caminho);
+  lateral?.selecionarNota(arvore.notas.some((item) => item.caminho === caminho) ? caminho : null);
   const carregando = elemento('section', 'estado-central');
   carregando.append(elemento('div', 'spinner'), elemento('p', '', 'Abrindo nota…'));
-  pagina.append(carregando);
-  raiz.append(pagina);
+  conteudo?.append(carregando);
 }
 
 function itemDeNota(item: NotaArvore, mostrarCaminho: boolean): HTMLButtonElement {
@@ -308,12 +424,16 @@ function itemDeNota(item: NotaArvore, mostrarCaminho: boolean): HTMLButtonElemen
   return botao;
 }
 
-function mostrarLista(mensagem = ''): void {
+function mostrarLista(mensagem = '', focarBusca = true): void {
   limpar();
+  montarCasca();
+  telaAtual = 'lista';
+  nota = null;
+  casca?.classList.remove('nota-ativa');
+  atualizarCabecalho(`${arvore.notas.length} notas`);
+  lateral?.selecionarNota(null);
   if (!arvore.pastas.has(pastaAtual)) pastaAtual = '';
   const pasta = arvore.pastas.get(pastaAtual) ?? arvore.raiz;
-  const pagina = elemento('main', 'app-shell');
-  pagina.append(cabecalho('Conhecimento', `${arvore.notas.length} notas`));
   const corpo = elemento('section', 'lista-corpo');
   const topo = elemento('div', 'lista-topo');
   const titulos = elemento('div');
@@ -392,10 +512,9 @@ function mostrarLista(mensagem = ''): void {
   };
   busca.addEventListener('input', renderizar);
   corpo.append(topo, trilha, busca, feedback, contador, lista);
-  pagina.append(corpo);
-  raiz.append(pagina);
+  conteudo?.append(corpo);
   renderizar();
-  busca.focus();
+  if (focarBusca) busca.focus();
 }
 
 function mostrarCriacao(): void {
@@ -446,6 +565,7 @@ function mostrarCriacao(): void {
       );
       caminhos = [...caminhos, caminho].sort((a, b) => a.localeCompare(b, 'pt-BR'));
       arvore = construirArvore(caminhos);
+      lateral?.atualizarArvore(arvore);
       nota = {
         caminho,
         sha: resultado.sha,
@@ -478,17 +598,12 @@ function mostrarNota(
 ): void {
   if (!nota || !token) return mostrarEntrada();
   limpar();
-  const pagina = elemento('main', 'app-shell nota-shell');
-  const header = cabecalho('Conhecimento', nota.caminho);
-  const voltar = elemento('button', 'botao botao-sutil', '← Pasta');
-  voltar.type = 'button';
-  voltar.addEventListener('click', () => {
-    if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
-    pastaAtual = pastaRetorno;
-    mostrarLista();
-  });
-  header.insertBefore(voltar, header.firstChild);
-  pagina.append(header);
+  montarCasca();
+  telaAtual = 'nota';
+  casca?.classList.add('nota-ativa');
+  atualizarCabecalho(nota.caminho, true);
+  lateral?.selecionarNota(nota.caminho);
+  const pagina = elemento('div', 'nota-shell');
 
   const barra = elemento('section', 'barra-nota');
   const modos = elemento('div', 'modos');
@@ -522,7 +637,7 @@ function mostrarNota(
   leituraHost.hidden = true;
   area.append(editorHost, leituraHost);
   pagina.append(area);
-  raiz.append(pagina);
+  conteudo?.append(pagina);
 
   const atualizarEstado = (): void => {
     if (!editor || !estadoSalvo) return;
@@ -630,7 +745,7 @@ function mostrarNota(
       }
       return;
     }
-    if (temAlteracoes() && !window.confirm('Descartar as alterações não gravadas?')) return;
+    if (!confirmarDescarte()) return;
     void abrirNota(acao.caminho, acao.secao, 'leitura', pastaDaNota(acao.caminho));
   });
 
@@ -764,6 +879,7 @@ if (token) {
     .then((resultado) => {
       caminhos = resultado;
       arvore = construirArvore(caminhos);
+      lateral?.atualizarArvore(arvore);
       mostrarLista();
     })
     .catch((erro) => {

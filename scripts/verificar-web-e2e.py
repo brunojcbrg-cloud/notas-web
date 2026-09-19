@@ -1,7 +1,7 @@
 # Execute com: py -3.14 scripts/verificar-web-e2e.py
 # -*- coding: utf-8 -*-
 # O Python do PATH não contém o Playwright usado por esta certificação.
-"""Casos 66–67 e 83–98 no Edge real.
+"""Casos 66–67, 83–98 e 101–118 no Edge real.
 
 Por padrão serve o build docs/ local para certificar antes do push. Use --url
 para conferir uma publicação específica depois do push.
@@ -39,10 +39,12 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.dont_write_bytecode = True
     from certificar_handoff_05 import certificar
+    from certificar_handoff_06 import certificar as certificar_06
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", help=f"endereço externo (padrão: docs/ local; publicado: {PUBLICADA})")
     parser.add_argument("--ver", action="store_true", help="abre o Edge visível")
+    parser.add_argument("--screenshot", help="salva print com quatro níveis abertos")
     args = parser.parse_args()
 
     erros_javascript: list[str] = []
@@ -105,7 +107,8 @@ def main() -> int:
             if MENSAGEM_API not in texto:
                 print(f"MENSAGEM RECEBIDA: {texto!r}")
             caso_05 = certificar(navegador, url) if caso_66 and caso_67 else False
-            return 0 if caso_66 and caso_67 and caso_05 else 1
+            caso_06 = certificar_06(navegador, url, args.screenshot) if caso_05 else False
+            return 0 if caso_66 and caso_67 and caso_05 and caso_06 else 1
         finally:
             navegador.close()
     finally:

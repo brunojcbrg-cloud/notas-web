@@ -112,12 +112,34 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .mensagem { margin: 4px 0 0; font-size: 13px; line-height: 1.45; }
 .erro { color: var(--perigo); }
 
-.app-shell { min-height: 100vh; }
-.cabecalho { position: sticky; z-index: 10; top: 0; min-height: 64px; display: flex; align-items: center; gap: 16px; padding: 10px clamp(16px, 4vw, 44px); background: var(--cabecalho-fundo); border-bottom: 1px solid var(--linha); backdrop-filter: blur(12px); }
-.marca { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.app-shell { height: 100vh; display: grid; grid-template-rows: 64px minmax(0, 1fr); overflow: hidden; }
+.app-corpo { position: relative; min-height: 0; display: flex; }
+.app-conteudo { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
+.nota-ativa .app-conteudo { overflow: hidden; }
+.botao-lateral { width: 38px; min-width: 38px; min-height: 38px; padding: 0; font-size: 19px; line-height: 1; }
+.botao-voltar { flex: none; white-space: nowrap; }
+.botao-voltar[hidden], .lateral[hidden], .lateral-fundo[hidden] { display: none; }
+.lateral { width: 280px; min-width: 280px; min-height: 0; display: flex; flex-direction: column; background: var(--papel); border-right: 1px solid var(--linha); }
+.lateral-topo { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--linha); font-size: 12px; }
+.lateral-topo strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lateral-total { color: var(--grafite-3); font-size: 11px; white-space: nowrap; }
+.lateral-arvore { min-height: 0; flex: 1; overflow: auto; padding: 8px 6px 28px; scrollbar-gutter: stable; }
+.lateral-item { width: 100%; min-height: 31px; display: flex; align-items: center; gap: 5px; padding: 4px 7px 4px calc(7px + var(--nivel-lateral) * 14px); color: var(--grafite-2); background: var(--transparente); border: 0; border-radius: 5px; text-align: left; cursor: pointer; }
+.lateral-item:hover { color: var(--grafite); background: var(--fundo-hover-sutil); }
+.lateral-item:focus-visible { outline: 2px solid var(--tinta); outline-offset: -2px; }
+.lateral-pasta { font-weight: 600; }
+.lateral-seta, .lateral-simbolo { width: 15px; min-width: 15px; color: var(--grafite-3); text-align: center; }
+.lateral-seta { font-size: 18px; line-height: 1; transition: transform 140ms; }
+.lateral-pasta[aria-expanded="true"] .lateral-seta { transform: rotate(90deg); }
+.lateral-nome { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lateral-contagem { color: var(--grafite-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.lateral-nota.ativa { color: var(--tinta); background: color-mix(in srgb, var(--papel) 86%, var(--tinta) 14%); font-weight: 650; }
+.lateral-fundo { display: none; }
+.cabecalho { position: sticky; z-index: 20; top: 0; min-height: 64px; display: flex; align-items: center; gap: 16px; padding: 10px clamp(16px, 4vw, 44px); background: var(--cabecalho-fundo); border-bottom: 1px solid var(--linha); backdrop-filter: blur(12px); }
+.marca { min-width: 0; flex: 1; display: flex; align-items: center; gap: 12px; }
 .marca strong { white-space: nowrap; }
 .caminho { max-width: min(52vw, 640px); overflow: hidden; color: var(--grafite-3); font-family: Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.cabecalho-acoes { min-width: 0; display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.cabecalho-acoes { min-width: 0; flex: none; display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .tema-controles { display: flex; gap: 6px; }
 .tema-seletor { min-height: 36px; padding: 6px 28px 6px 9px; color: var(--grafite-2); background: var(--folha); border: 1px solid var(--linha); border-radius: 7px; font: inherit; font-size: 12px; }
 .lista-corpo { width: min(100% - 32px, 920px); margin: 0 auto; padding: clamp(44px, 7vw, 84px) 0 100px; }
@@ -145,7 +167,7 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .spinner { width: 24px; height: 24px; margin-bottom: 12px; border: 2px solid var(--linha); border-top-color: var(--tinta); border-radius: 50%; animation: girar 700ms linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }
 
-.nota-shell { height: 100vh; display: grid; grid-template-rows: auto auto auto 1fr; overflow: hidden; }
+.nota-shell { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .barra-nota { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 7px clamp(16px, 4vw, 44px); background: var(--folha); border-bottom: 1px solid var(--linha); }
 .modos { display: flex; gap: 4px; padding: 3px; background: var(--folha-baixa); border-radius: 8px; }
 .modo { min-height: 36px; padding: 6px 14px; color: var(--grafite-2); background: var(--transparente); border: 0; border-radius: 6px; font-size: 13px; font-weight: 650; cursor: pointer; }
@@ -155,7 +177,7 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .estado-salvo.alterado { color: var(--ambar); }
 .aviso { margin: 0; padding: 12px clamp(16px, 4vw, 44px); font-size: 13px; }
 .aviso-perigo { color: var(--aviso-perigo-texto); background: var(--aviso-perigo-fundo); border-bottom: 1px solid var(--aviso-perigo-linha); }
-.area-nota { min-height: 0; overflow: hidden; background: var(--folha); }
+.area-nota { min-height: 0; flex: 1; overflow: hidden; background: var(--folha); }
 .editor-host { height: 100%; }
 .leitura-markdown { height: 100%; overflow: auto; max-width: 860px; margin: 0 auto; padding: 44px 32px 140px; font-family: Georgia, serif; font-size: 17px; line-height: 1.72; }
 .leitura-markdown h1, .leitura-markdown h2, .leitura-markdown h3, .leitura-markdown h4, .leitura-markdown h5, .leitura-markdown h6 { margin-top: 1.8em; margin-bottom: 0.6em; line-height: 1.2; }
@@ -226,8 +248,11 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
   .entrada-painel { padding: 28px 22px; }
   .cabecalho { gap: 8px; }
   .cabecalho .marca-sinal, .cabecalho .marca strong { display: none; }
-  .cabecalho > .botao:first-child { padding-inline: 10px; }
-  .caminho { max-width: 42vw; }
+  .cabecalho .caminho { display: none; }
+  .botao-voltar { min-width: 38px; padding-inline: 8px; font-size: 0; }
+  .botao-voltar::before { content: '←'; font-size: 18px; }
+  .lateral { position: absolute; z-index: 16; top: 0; bottom: 0; left: 0; width: min(280px, calc(100vw - 48px)); min-width: 0; box-shadow: 10px 0 35px var(--sombra-painel); }
+  .lateral-fundo:not([hidden]) { position: fixed; z-index: 15; inset: 0; display: block; width: 100%; padding: 0; background: var(--fundo-backdrop); border: 0; cursor: pointer; }
   .cabecalho-acoes { gap: 6px; }
   .tema-seletor { max-width: 92px; padding-right: 20px; }
   .lista-topo { align-items: stretch; flex-direction: column; }
