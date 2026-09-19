@@ -12,6 +12,7 @@ import {
   listarNotasComSha,
   PASTA,
   salvarNota,
+  validarCaminho,
   type NotaRemota,
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
@@ -53,6 +54,7 @@ let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
 let caminhos: string[] = [];
 let blobs = new Map<string, string>();
+let pastasPendentes = new Set<string>();
 let treeSha = '';
 let arvore: ArvoreNotas = construirArvore([]);
 let pastaAtual = '';
@@ -104,6 +106,12 @@ function limpar(): void {
   estadoSalvo = null;
   salvarAtual = null;
   conteudo?.replaceChildren();
+}
+
+function limparPendentesMaterializadas(): void {
+  for (const pendente of pastasPendentes) {
+    if (caminhos.some((caminho) => caminho.startsWith(`${PASTA}${pendente}/`))) pastasPendentes.delete(pendente);
+  }
 }
 
 function confirmarDescarte(): boolean {
@@ -205,6 +213,7 @@ function encerrarSessao(): void {
   blobs = new Map();
   treeSha = '';
   arvore = construirArvore([]);
+  pastasPendentes.clear();
   nota = null;
 }
 
@@ -270,6 +279,12 @@ function montarCasca(): void {
     !telaPequena(),
     (origem, destino) => void moverInterativo(origem, destino),
     (origem) => void renomearInterativo(origem),
+    (pasta) => {
+      if (!confirmarDescarte()) return;
+      pastaAtual = pasta;
+      mostrarCriacao();
+    },
+    (pasta) => mostrarNovaPasta(pasta),
   );
   lateral.elemento.id = 'explorador-notas';
   conteudo = elemento('main', 'app-conteudo');
@@ -366,7 +381,7 @@ function mostrarEntrada(mensagem = ''): void {
       caminhos = lista.caminhos;
       blobs = lista.blobs;
       treeSha = lista.treeSha;
-      arvore = construirArvore(caminhos);
+      arvore = construirArvore(caminhos, [...pastasPendentes]);
       guardarToken(sessionStorage, valor);
       token = valor;
       input.value = '';
@@ -457,7 +472,12 @@ function mostrarLista(mensagem = '', focarBusca = true): void {
   const nova = elemento('button', 'botao botao-primario', 'Nova nota');
   nova.type = 'button';
   nova.addEventListener('click', mostrarCriacao);
-  topo.append(titulos, nova);
+  const novaPasta = elemento('button', 'botao botao-sutil', 'Nova pasta');
+  novaPasta.type = 'button';
+  novaPasta.addEventListener('click', () => mostrarNovaPasta(pastaAtual));
+  const acoesCriacao = elemento('div', 'lista-acoes');
+  acoesCriacao.append(novaPasta, nova);
+  topo.append(titulos, acoesCriacao);
 
   const trilha = elemento('nav', 'trilha');
   trilha.setAttribute('aria-label', 'Pastas da nota');
@@ -513,7 +533,9 @@ function mostrarLista(mensagem = '', focarBusca = true): void {
       const texto = elemento('span', 'item-texto');
       texto.append(
         elemento('span', 'item-nome', entrada.nome),
-        elemento('span', 'item-caminho', `${entrada.totalNotas} ${entrada.totalNotas === 1 ? 'nota' : 'notas'}`),
+        elemento('span', 'item-caminho', entrada.pendente
+          ? 'Pendente: vazia; some ao recarregar até receber uma nota'
+          : `${entrada.totalNotas} ${entrada.totalNotas === 1 ? 'nota' : 'notas'}`),
       );
       item.append(elemento('span', 'item-marca', 'DIR'), texto, elemento('span', 'item-seta', '→'));
       item.addEventListener('click', () => {
@@ -530,6 +552,24 @@ function mostrarLista(mensagem = '', focarBusca = true): void {
   if (focarBusca) busca.focus();
 }
 
+function mostrarNovaPasta(pastaPai: string): void {
+  const resposta = window.prompt('Nome da nova pasta (fica pendente até receber uma nota):');
+  if (resposta === null) return;
+  const nome = resposta.trim();
+  const caminho = `${pastaPai ? `${pastaPai}/` : ''}${nome}`;
+  try {
+    if (!nome || nome.startsWith('/') || nome.endsWith('/') || nome.includes('\\')) throw new Error('Nome de pasta inválido.');
+    validarCaminho(`${PASTA}${caminho}/__validacao__.md`);
+    if (arvore.pastas.has(caminho)) throw new CaminhoExistente();
+    pastasPendentes.add(caminho);
+    arvore = construirArvore(caminhos, [...pastasPendentes]);
+    lateral?.atualizarArvore(arvore);
+    pastaAtual = caminho;
+    if (telaAtual === 'lista') mostrarLista('', false);
+    window.alert('Pasta pendente na tela. Ela só será gravada no Git quando receber a primeira nota; se recarregar antes, desaparecerá.');
+  } catch (erro) { window.alert(erroSeguro(erro)); }
+}
+
 function mostrarCriacao(): void {
   if (!token) return mostrarEntrada();
   const dialogo = elemento('dialog', 'dialogo');
@@ -539,14 +579,14 @@ function mostrarCriacao(): void {
   form.append(
     elemento('p', 'sobretitulo', 'NOVA NOTA'),
     elemento('h2', '', 'Dê um nome ao arquivo'),
-    elemento('p', 'dialogo-texto', `Destino: ${destino}`),
+    elemento('p', 'dialogo-texto', `Destino: ${destino}. Use subpastas no nome, por exemplo Anatomia/Ossos do crânio.`),
   );
   const label = elemento('label', '', 'Nome da nota');
   label.htmlFor = 'nome-nota';
   const input = elemento('input', 'campo') as HTMLInputElement;
   input.id = 'nome-nota';
   input.required = true;
-  input.placeholder = 'Ex.: Farmacologia básica';
+  input.placeholder = 'Ex.: Anatomia/Ossos do crânio';
   const erro = elemento('p', 'mensagem erro');
   erro.hidden = true;
   const acoes = elemento('div', 'dialogo-acoes');
@@ -560,13 +600,16 @@ function mostrarCriacao(): void {
   form.addEventListener('submit', async (evento) => {
     evento.preventDefault();
     let nome = input.value.trim();
-    if (nome.includes('/') || nome.includes('\\')) {
-      erro.textContent = 'Digite apenas o nome; a pasta já está preenchida.';
+    if (!/\.md$/i.test(nome)) nome += '.md';
+    const caminho = `${destino}${nome}`;
+    try {
+      validarCaminho(caminho);
+      if (!nomeDaNota(caminho)) throw new Error('Nome da nota obrigatório.');
+    } catch (falha) {
+      erro.textContent = erroSeguro(falha);
       erro.hidden = false;
       return;
     }
-    if (!nome.endsWith('.md')) nome += '.md';
-    const caminho = `${destino}${nome}`;
     criar.disabled = true;
     criar.textContent = 'Criando…';
     try {
@@ -577,7 +620,8 @@ function mostrarCriacao(): void {
         caminhos,
       );
       caminhos = [...caminhos, caminho].sort((a, b) => a.localeCompare(b, 'pt-BR'));
-      arvore = construirArvore(caminhos);
+      limparPendentesMaterializadas();
+      arvore = construirArvore(caminhos, [...pastasPendentes]);
       lateral?.atualizarArvore(arvore);
       blobs.set(caminho, resultado.sha);
       treeSha = resultado.treeSha ?? '';
@@ -589,7 +633,8 @@ function mostrarCriacao(): void {
         somenteLeitura: false,
         eol: 'lf',
       };
-      pastaRetorno = pastaAtual;
+      pastaRetorno = pastaDaNota(caminho);
+      pastaAtual = pastaRetorno;
       dialogo.close();
       mostrarNota();
     } catch (falha) {
@@ -674,6 +719,7 @@ async function moverInterativo(origem: OrigemMovimento, destino?: string): Promi
     treeSha = resultado.treeSha;
     caminhos = caminhos.map((caminho) => resultado.caminhos.get(caminho) ?? caminho)
       .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    limparPendentesMaterializadas();
     const prefixoAntigo = origem.tipo === 'pasta' ? `${origem.caminho}/` : '';
     const prefixoNovo = origem.tipo === 'pasta'
       ? `${destino ? `${destino}/` : ''}${origem.caminho.split('/').at(-1)}/` : '';
@@ -688,7 +734,7 @@ async function moverInterativo(origem: OrigemMovimento, destino?: string): Promi
       pastaAtual = pastaRetorno;
       atualizarCabecalho(nota.caminho, true);
     }
-    arvore = construirArvore(caminhos);
+    arvore = construirArvore(caminhos, [...pastasPendentes]);
     lateral?.atualizarArvore(arvore);
     if (nota) lateral?.selecionarNota(nota.caminho);
     if (telaAtual === 'lista') {
@@ -744,6 +790,7 @@ async function renomearInterativo(origem: OrigemMovimento): Promise<void> {
     treeSha = resultado.treeSha;
     caminhos = caminhos.map((caminho) => resultado.caminhos.get(caminho) ?? caminho)
       .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    limparPendentesMaterializadas();
     if (origem.tipo === 'pasta') {
       const novoCaminho = (resultado.caminhos.values().next().value as string).slice(PASTA.length);
       const prefixoNovo = novoCaminho.split('/').slice(0, origem.caminho.split('/').length).join('/');
@@ -762,7 +809,7 @@ async function renomearInterativo(origem: OrigemMovimento): Promise<void> {
       pastaRetorno = pastaDaNota(nota.caminho);
       pastaAtual = pastaRetorno;
     }
-    arvore = construirArvore(caminhos);
+    arvore = construirArvore(caminhos, [...pastasPendentes]);
     lateral?.atualizarArvore(arvore);
     if (nota && telaAtual === 'nota') mostrarNota();
     else if (telaAtual === 'lista') mostrarLista('', false);
@@ -1070,7 +1117,7 @@ if (token) {
       caminhos = resultado.caminhos;
       blobs = resultado.blobs;
       treeSha = resultado.treeSha;
-      arvore = construirArvore(caminhos);
+      arvore = construirArvore(caminhos, [...pastasPendentes]);
       lateral?.atualizarArvore(arvore);
       mostrarLista();
     })

@@ -278,4 +278,39 @@ def certificar(navegador, url: str) -> bool:
     finally:
         contexto.close()
 
+    contexto, pagina, estado, erros = contexto_falso()
+    try:
+        pagina.get_by_role("button", name="Nova nota", exact=True).click()
+        pagina.locator("#nome-nota").fill("Anatomia/Ossos do crânio")
+        pagina.get_by_role("button", name="Criar nota").click()
+        novo = f"{P}Anatomia/Ossos do crânio.md"
+        pagina.locator(f'.lateral-nota[data-caminho="{novo}"]').wait_for(state="attached")
+        verificar(132, "Nova nota aceita subpasta no nome e revela pasta antes invisível",
+                 estado["puts"][-1][0] == novo
+                 and pagina.locator('.lateral-pasta[data-caminho="Anatomia"]').count() == 1
+                 and estado["blobs"].get(novo) is not None and not erros)
+    finally:
+        contexto.close()
+
+    contexto, pagina, estado, erros = contexto_falso()
+    try:
+        avisos = []
+        def dialogo_pendente(dialogo) -> None:
+            avisos.append(dialogo.message)
+            if dialogo.type == "prompt": dialogo.accept("Leituras")
+            else: dialogo.accept()
+        pagina.on("dialog", dialogo_pendente)
+        pagina.get_by_role("button", name="Nova pasta", exact=True).click()
+        pendente = pagina.locator('.lateral-pasta[data-caminho="Leituras"]')
+        pendente.wait_for(state="attached")
+        rotulo = pendente.inner_text()
+        pagina.reload(wait_until="networkidle")
+        pagina.locator('.lateral-pasta[data-caminho="A"]').wait_for(state="attached")
+        verificar(133, "pasta pendente avisa que some ao recarregar e não grava no Git",
+                 "pendente" in rotulo.lower() and any("desaparecerá" in aviso for aviso in avisos)
+                 and pagina.locator('.lateral-pasta[data-caminho="Leituras"]').count() == 0
+                 and not estado["puts"] and not estado["calls"] and not erros)
+    finally:
+        contexto.close()
+
     return not falhas

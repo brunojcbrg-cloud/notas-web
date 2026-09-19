@@ -78,4 +78,13 @@ describe('casos 21–26 · árvore de pastas', () => {
     expect(fetchFalso).not.toHaveBeenCalled();
     globalThis.fetch = fetchOriginal;
   });
+
+  it('133. pasta pendente existe só na árvore da sessão e vira real com a primeira nota', () => {
+    const vazia = construirArvore([], ['Leituras/Livros']);
+    expect(vazia.pastas.get('Leituras/Livros')).toMatchObject({ pendente: true, totalNotas: 0 });
+    expect(construirArvore([]).pastas.has('Leituras')).toBe(false);
+    const criada = construirArvore(['06_Conhecimento/Leituras/Livros/Primeira.md'], ['Leituras/Livros']);
+    expect(criada.pastas.get('Leituras/Livros')).toMatchObject({ totalNotas: 1 });
+    expect(criada.pastas.get('Leituras/Livros')?.pendente).toBeUndefined();
+  });
 });

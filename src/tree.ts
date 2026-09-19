@@ -1,4 +1,4 @@
-import { PASTA } from './github';
+import { PASTA, validarCaminho } from './github';
 
 export interface NotaArvore {
   tipo: 'nota';
@@ -14,6 +14,7 @@ export interface PastaArvore {
   pastas: Map<string, PastaArvore>;
   notas: NotaArvore[];
   totalNotas: number;
+  pendente?: boolean;
 }
 
 export interface ArvoreNotas {
@@ -52,7 +53,7 @@ function novaPasta(nome: string, caminho: string): PastaArvore {
   };
 }
 
-export function construirArvore(caminhos: readonly string[]): ArvoreNotas {
+export function construirArvore(caminhos: readonly string[], pastasPendentes: readonly string[] = []): ArvoreNotas {
   const raiz = novaPasta('06_Conhecimento', '');
   const pastas = new Map<string, PastaArvore>([['', raiz]]);
   const notas: NotaArvore[] = [];
@@ -85,6 +86,24 @@ export function construirArvore(caminhos: readonly string[]): ArvoreNotas {
     };
     atual.notas.push(nota);
     notas.push(nota);
+  }
+
+  for (const pendente of pastasPendentes) {
+    validarCaminho(`${PASTA}${pendente}/__validacao__.md`);
+    let atual = raiz;
+    const acumulado: string[] = [];
+    for (const segmento of pendente.split('/')) {
+      acumulado.push(segmento);
+      const caminho = acumulado.join('/');
+      let filha = atual.pastas.get(segmento);
+      if (!filha) {
+        filha = novaPasta(segmento, caminho);
+        filha.pendente = true;
+        atual.pastas.set(segmento, filha);
+        pastas.set(caminho, filha);
+      }
+      atual = filha;
+    }
   }
 
   const contar = (pasta: PastaArvore): number => {

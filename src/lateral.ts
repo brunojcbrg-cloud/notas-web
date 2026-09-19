@@ -60,6 +60,8 @@ export function criarLateral(
   abertaPadrao = true,
   aoMover?: (origem: OrigemMovimento, destino?: string) => void,
   aoRenomear?: (origem: OrigemMovimento) => void,
+  aoCriarNota?: (pasta: string) => void,
+  aoCriarPasta?: (pasta: string) => void,
 ): Lateral {
   let arvore = arvoreInicial;
   const estado = lerEstadoLateral(storage, arvore, abertaPadrao);
@@ -98,11 +100,15 @@ export function criarLateral(
     const painel = document.createElement('div');
     painel.className = 'lateral-menu';
     painel.setAttribute('role', 'menu');
+    const pendente = origem.tipo === 'pasta' && arvore.pastas.get(origem.caminho)?.pendente;
     for (const [rotulo, acao] of [
       ['Abrir', () => origem.tipo === 'nota' ? aoAbrirNota(origem.caminho) : aoAbrirPasta(origem.caminho)],
       ['Mover para…', () => aoMover?.(origem)],
       ['Renomear', () => aoRenomear?.(origem)],
+      ['Nova nota aqui', () => aoCriarNota?.(origem.tipo === 'nota' ? pastaDaNota(origem.caminho) : origem.caminho)],
+      ['Nova pasta aqui', () => aoCriarPasta?.(origem.tipo === 'nota' ? pastaDaNota(origem.caminho) : origem.caminho)],
     ] as const) {
+      if (pendente && (rotulo === 'Mover para…' || rotulo === 'Renomear')) continue;
       const botao = document.createElement('button');
       botao.type = 'button';
       botao.setAttribute('role', 'menuitem');
@@ -124,7 +130,7 @@ export function criarLateral(
 
   const gestos = (botao: HTMLButtonElement, origem: OrigemMovimento, destino?: string): void => {
     if (!aoMover) return;
-    botao.draggable = true;
+    botao.draggable = !(origem.tipo === 'pasta' && arvore.pastas.get(origem.caminho)?.pendente);
     botao.addEventListener('dragstart', (evento) => {
       arrastada = origem;
       evento.dataTransfer?.setData('text/plain', origem.caminho);
@@ -243,6 +249,10 @@ export function criarLateral(
         botao.dataset.caminho = entrada.caminho;
         botao.dataset.nivel = String(profundidade);
         botao.title = entrada.nome;
+        if (entrada.pendente) {
+          botao.classList.add('lateral-pendente');
+          botao.title = `${entrada.nome} — vazia; some ao recarregar até receber uma nota`;
+        }
         botao.style.setProperty('--nivel-lateral', String(profundidade));
         const id = `lateral-grupo-${indice++}`;
         botao.setAttribute('aria-controls', id);
@@ -252,7 +262,7 @@ export function criarLateral(
         seta.textContent = '›';
         const nome = document.createElement('span');
         nome.className = 'lateral-nome';
-        nome.textContent = entrada.nome;
+        nome.textContent = entrada.pendente ? `${entrada.nome} (pendente)` : entrada.nome;
         const total = document.createElement('span');
         total.className = 'lateral-contagem';
         total.textContent = String(entrada.totalNotas);
