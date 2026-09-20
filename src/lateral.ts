@@ -22,14 +22,23 @@ export interface Lateral {
   atualizarArvore(arvore: ArvoreNotas): void;
 }
 
+export interface OpcoesLateral {
+  chaveEstado?: string;
+  titulo?: string;
+  unidade?: string;
+  ariaLabel?: string;
+  simboloArquivo?: string;
+}
+
 export function lerEstadoLateral(
   storage: ArmazenamentoLateral,
   arvore: ArvoreNotas,
   abertaPadrao = true,
+  chaveEstado = CHAVE_LATERAL,
 ): EstadoLateral {
   const padrao = (): EstadoLateral => ({ aberta: abertaPadrao, expandidas: [] });
   try {
-    const valor = storage.getItem(CHAVE_LATERAL);
+    const valor = storage.getItem(chaveEstado);
     if (!valor) return padrao();
     const lido: unknown = JSON.parse(valor);
     if (!lido || typeof lido !== 'object' || Array.isArray(lido)) return padrao();
@@ -63,9 +72,10 @@ export function criarLateral(
   aoCriarNota?: (pasta: string) => void,
   aoCriarPasta?: (pasta: string) => void,
   aoApagar?: (origem: OrigemMovimento) => void,
+  opcoes: OpcoesLateral = {},
 ): Lateral {
   let arvore = arvoreInicial;
-  const estado = lerEstadoLateral(storage, arvore, abertaPadrao);
+  const estado = lerEstadoLateral(storage, arvore, abertaPadrao, opcoes.chaveEstado);
   const expandidas = new Set(estado.expandidas);
   let notaSelecionada: string | null = null;
   const pastas = new Map<string, { botao: HTMLButtonElement; filhos: HTMLElement }>();
@@ -78,17 +88,17 @@ export function criarLateral(
 
   const aside = document.createElement('aside');
   aside.className = 'lateral';
-  aside.setAttribute('aria-label', 'Explorador de notas');
+  aside.setAttribute('aria-label', opcoes.ariaLabel ?? 'Explorador de notas');
   const topo = document.createElement('div');
   topo.className = 'lateral-topo';
   const titulo = document.createElement('strong');
-  titulo.textContent = '06_Conhecimento';
+  titulo.textContent = opcoes.titulo ?? '06_Conhecimento';
   const contagem = document.createElement('span');
   contagem.className = 'lateral-total';
   topo.append(titulo, contagem);
   const navegacao = document.createElement('nav');
   navegacao.className = 'lateral-arvore';
-  navegacao.setAttribute('aria-label', 'Pastas e notas');
+  navegacao.setAttribute('aria-label', opcoes.ariaLabel ?? 'Pastas e notas');
   aside.append(topo, navegacao);
 
   const fecharMenu = (): void => {
@@ -189,7 +199,7 @@ export function criarLateral(
 
   const guardar = (): void => {
     try {
-      storage.setItem(CHAVE_LATERAL, JSON.stringify({ ...estado, expandidas: [...expandidas] }));
+      storage.setItem(opcoes.chaveEstado ?? CHAVE_LATERAL, JSON.stringify({ ...estado, expandidas: [...expandidas] }));
     } catch {
       // Preferências indisponíveis não devem impedir a navegação.
     }
@@ -207,7 +217,7 @@ export function criarLateral(
     fecharMenu();
     pastas.clear();
     notas.clear();
-    contagem.textContent = `${arvore.notas.length} notas`;
+    contagem.textContent = `${arvore.notas.length} ${opcoes.unidade ?? 'notas'}`;
     let indice = 0;
     const nivel = (caminho: string, profundidade: number): HTMLElement => {
       const grupo = document.createElement('div');
@@ -223,7 +233,7 @@ export function criarLateral(
           botao.style.setProperty('--nivel-lateral', String(profundidade));
           const simbolo = document.createElement('span');
           simbolo.className = 'lateral-simbolo';
-          simbolo.textContent = '·';
+          simbolo.textContent = opcoes.simboloArquivo ?? '·';
           const nome = document.createElement('span');
           nome.className = 'lateral-nome';
           nome.textContent = entrada.nome;

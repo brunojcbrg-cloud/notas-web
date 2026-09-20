@@ -225,7 +225,7 @@ def certificar(navegador, url: str) -> bool:
         pagina.clock.fast_forward(15 * 60 * 1000 + 1000)
         bloqueou_depois = pagina.locator("#token").is_visible()
         pagina.mouse.up()
-        verificar(141, "iniciar arrasto renova o relógio de inatividade no Edge",
+        verificar(137, "iniciar arrasto renova o relógio de inatividade no Edge",
                  ativa_apos_arrasto and bloqueou_depois and not erros,
                  "ativa após 14min59s + arrasto + 2s; bloqueia 15min após o dragstart")
     finally:

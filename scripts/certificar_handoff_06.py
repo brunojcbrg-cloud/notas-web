@@ -1,4 +1,4 @@
-"""Certificação da coluna lateral no Edge com a árvore real e API em memória."""
+"""Certificação da coluna lateral no Edge com árvore sintética e API em memória."""
 from __future__ import annotations
 
 import base64
@@ -7,16 +7,18 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 
-RAIZ_VAULT = Path(r"E:\Obsidian\CONHECIMENTO\06_Conhecimento")
 PREFIXO = "06_Conhecimento/"
 
 
 def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
     falhas: list[str] = []
-    caminhos = sorted(
-        PREFIXO + arquivo.relative_to(RAIZ_VAULT).as_posix()
-        for arquivo in RAIZ_VAULT.rglob("*.md")
-    )
+    caminhos = sorted([
+        *(f"{PREFIXO}Medicina/Matérias Básicas/Genética/P3/Nota {i:02}.md" for i in range(77)),
+        *(f"{PREFIXO}Medicina/Anatomia/Aula {i:02}.md" for i in range(60)),
+        f"{PREFIXO}Hipótese de ''Dois eventos/Nota.md",
+        f"{PREFIXO}Hipótese de Dois eventos/Nota.md",
+        f"{PREFIXO}Medicina/Anatomia/Um nome de nota bastante longo para verificar o corte com reticências.md",
+    ])
     pastas_esperadas = {
         "/".join(partes[:indice])
         for caminho in caminhos
@@ -74,7 +76,7 @@ def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
             "elementos => elementos.map(el => el.dataset.caminho)"
         )
         shell_unica = pagina.evaluate("() => document.querySelector('#app').children.length === 1 && document.querySelector('.cabecalho').getBoundingClientRect().top === 0")
-        verificar(101, "árvore real sem duplicatas e casca única",
+        verificar(101, "árvore sintética sem duplicatas e casca única",
                  sorted(pastas) == sorted(pastas_esperadas) and sorted(notas) == caminhos
                  and shell_unica and not erros,
                  f"{len(pastas)} pastas com notas, {len(notas)} notas")

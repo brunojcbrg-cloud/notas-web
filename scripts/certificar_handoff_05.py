@@ -4,14 +4,9 @@ from __future__ import annotations
 import base64
 import json
 import statistics
-from pathlib import Path
 from time import perf_counter
 
 
-NOTA_REAL = Path(
-    r"E:\Obsidian\CONHECIMENTO\06_Conhecimento\Medicina\Matérias Básicas"
-    r"\Microbiologia\Aula Introdução à micro.md"
-)
 CAMINHO = "06_Conhecimento/Medicina/Matérias Básicas/Microbiologia/Aula Introdução à micro.md"
 
 
@@ -73,8 +68,8 @@ def certificar(navegador, url: str) -> bool:
         ordenadas = sorted(amostras)
         return statistics.median(amostras), ordenadas[189]
 
-    original = NOTA_REAL.read_bytes()
-    verificar(83, "nota real carregada", len(original) > 80_000, f"{len(original)} bytes")
+    original = ("# Apostila sintética\n" + "Conteúdo de estudo com **marcas** e texto repetido para medir edição.\n" * 1400).encode("utf-8")
+    verificar(83, "nota sintética carregada", len(original) > 80_000, f"{len(original)} bytes")
     contexto, pagina, erros, gravacoes = abrir_nota(original)
     modo(pagina, "Ao vivo")
     pagina.get_by_role("button", name="Salvar", exact=True).click()
@@ -86,7 +81,7 @@ def certificar(navegador, url: str) -> bool:
     contexto, pagina, erros, _ = abrir_nota(original)
     mediana_fonte, p95_fonte = medir_teclas(pagina, "Fonte")
     verificar(
-        92, "200 teclas na nota real de 88 KB",
+        92, "200 teclas na nota sintética de mais de 80 KB",
         not erros,
         f"Ao vivo mediana {mediana_ao_vivo:.1f} ms, p95 {p95_ao_vivo:.1f} ms; "
         f"Fonte mediana {mediana_fonte:.1f} ms, p95 {p95_fonte:.1f} ms",

@@ -17,6 +17,17 @@ import {
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
 import { criarLateral, type Lateral } from './lateral';
+import {
+  CHAVE_LATERAL_MATERIAIS,
+  construirArvoreMateriais,
+  grandeParaLinkDireto,
+  lerManifestoMateriais,
+  tamanhoLegivel,
+  urlAbrir,
+  urlBaixar,
+  type EstadoMateriais,
+  type Material,
+} from './materiais';
 import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
 import { configurarLivePreview, livePreview } from './NotaLivePreview';
@@ -70,10 +81,17 @@ let pararBloqueio: (() => void) | null = null;
 let casca: HTMLElement | null = null;
 let conteudo: HTMLElement | null = null;
 let lateral: Lateral | null = null;
+let lateralMateriais: Lateral | null = null;
+let estadoMateriais: EstadoMateriais = { tipo: 'ausente', mensagem: 'Manifesto ainda não gerado. Rode o gerador no PC e sincronize o vault.' };
+let arvoreMateriais: ArvoreNotas = construirArvoreMateriais([]);
+let materiaisPorCaminho = new Map<string, Material>();
+let secaoAtual: 'conhecimento' | 'materiais' = 'conhecimento';
+let pastaMaterialAtual = '';
+const rolagemLaterais = { conhecimento: 0, materiais: 0 };
 let botaoLateral: HTMLButtonElement | null = null;
 let botaoVoltar: HTMLButtonElement | null = null;
 let subtituloCabecalho: HTMLElement | null = null;
-let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' = 'entrada';
+let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' | 'materiais' = 'entrada';
 let sequenciaAbertura = 0;
 
 interface RascunhoMemoria {
@@ -124,18 +142,62 @@ function telaPequena(): boolean {
 
 function sincronizarLateral(): void {
   if (!casca || !lateral || !botaoLateral) return;
+  const painel = secaoAtual === 'materiais' ? lateralMateriais : lateral;
+  if (!painel) return;
   const aberta = lateral.aberta();
   casca.classList.toggle('lateral-aberta', aberta);
-  lateral.elemento.hidden = !aberta;
+  painel.elemento.hidden = !aberta;
   botaoLateral.setAttribute('aria-expanded', String(aberta));
   botaoLateral.setAttribute('aria-label', aberta ? 'Fechar coluna lateral' : 'Abrir coluna lateral');
+  botaoLateral.setAttribute('aria-controls', painel.elemento.id);
   const fundo = casca.querySelector<HTMLButtonElement>('.lateral-fundo');
   if (fundo) fundo.hidden = !aberta || !telaPequena();
 }
 
 function definirLateralAberta(aberta: boolean): void {
   lateral?.definirAberta(aberta);
+  lateralMateriais?.definirAberta(aberta);
   sincronizarLateral();
+}
+
+function atualizarAbas(): void {
+  for (const aside of [lateral?.elemento, lateralMateriais?.elemento]) {
+    aside?.querySelectorAll<HTMLButtonElement>('.aba-secao').forEach((botao) => {
+      const ativa = botao.dataset.secao === secaoAtual;
+      botao.classList.toggle('ativa', ativa);
+      if (ativa) botao.setAttribute('aria-current', 'page');
+      else botao.removeAttribute('aria-current');
+    });
+  }
+}
+
+function selecionarSecao(secao: 'conhecimento' | 'materiais'): void {
+  if (secao === secaoAtual) return;
+  if (!confirmarDescarte()) return;
+  const anterior = secaoAtual === 'materiais' ? lateralMateriais : lateral;
+  const proximo = secao === 'materiais' ? lateralMateriais : lateral;
+  if (!anterior || !proximo) return;
+  rolagemLaterais[secaoAtual] = anterior.elemento.querySelector('.lateral-arvore')?.scrollTop ?? 0;
+  secaoAtual = secao;
+  anterior.elemento.replaceWith(proximo.elemento);
+  proximo.elemento.querySelector('.lateral-arvore')?.scrollTo(0, rolagemLaterais[secao]);
+  atualizarAbas();
+  sincronizarLateral();
+  if (secao === 'materiais') mostrarMateriais();
+  else mostrarLista('', false);
+}
+
+function inserirAbas(painel: Lateral): void {
+  const abas = elemento('nav', 'abas-secao');
+  abas.setAttribute('aria-label', 'Áreas do app');
+  for (const [secao, nome] of [['conhecimento', 'Conhecimento'], ['materiais', 'Materiais']] as const) {
+    const botao = elemento('button', 'aba-secao', nome);
+    botao.type = 'button';
+    botao.dataset.secao = secao;
+    botao.addEventListener('click', () => selecionarSecao(secao));
+    abas.append(botao);
+  }
+  painel.elemento.prepend(abas);
 }
 
 function atualizarCabecalho(subtitulo: string, mostrarVoltar = false): void {
@@ -213,6 +275,11 @@ function encerrarSessao(): void {
   blobs = new Map();
   treeSha = '';
   arvore = construirArvore([]);
+  estadoMateriais = { tipo: 'ausente', mensagem: 'Manifesto ainda não gerado. Rode o gerador no PC e sincronize o vault.' };
+  arvoreMateriais = construirArvoreMateriais([]);
+  materiaisPorCaminho = new Map();
+  secaoAtual = 'conhecimento';
+  pastaMaterialAtual = '';
   pastasPendentes.clear();
   nota = null;
 }
@@ -288,6 +355,32 @@ function montarCasca(): void {
     (origem) => void apagarInterativo(origem),
   );
   lateral.elemento.id = 'explorador-notas';
+  lateralMateriais = criarLateral(
+    arvoreMateriais,
+    localStorage,
+    (caminho) => {
+      const material = materiaisPorCaminho.get(caminho);
+      if (material) window.open(urlAbrir(material), '_blank', 'noopener,noreferrer');
+      if (telaPequena()) definirLateralAberta(false);
+    },
+    (caminho) => {
+      pastaMaterialAtual = caminho;
+      if (telaAtual === 'materiais') mostrarMateriais();
+    },
+    !telaPequena(),
+    undefined, undefined, undefined, undefined, undefined,
+    {
+      chaveEstado: CHAVE_LATERAL_MATERIAIS,
+      titulo: 'CENTRAL_MATERIAIS',
+      unidade: 'PDFs',
+      ariaLabel: 'Pastas e PDFs dos materiais',
+      simboloArquivo: '▣',
+    },
+  );
+  lateralMateriais.elemento.id = 'explorador-materiais';
+  inserirAbas(lateral);
+  inserirAbas(lateralMateriais);
+  atualizarAbas();
   conteudo = elemento('main', 'app-conteudo');
   corpo.append(lateral.elemento, conteudo);
   const fundo = elemento('button', 'lateral-fundo');
@@ -346,6 +439,7 @@ function mostrarEntrada(mensagem = ''): void {
   botaoLateral = null;
   botaoVoltar = null;
   subtituloCabecalho = null;
+  lateralMateriais = null;
   telaAtual = 'entrada';
   const pagina = elemento('main', 'entrada');
   const painel = elemento('section', 'entrada-painel');
@@ -378,11 +472,14 @@ function mostrarEntrada(mensagem = ''): void {
     botao.textContent = 'Verificando…';
     status.hidden = true;
     try {
-      const lista = await listarNotasComSha(valor);
+      const [lista, materiais] = await Promise.all([listarNotasComSha(valor), lerManifestoMateriais(valor)]);
       caminhos = lista.caminhos;
       blobs = lista.blobs;
       treeSha = lista.treeSha;
       arvore = construirArvore(caminhos, [...pastasPendentes]);
+      estadoMateriais = materiais;
+      arvoreMateriais = construirArvoreMateriais(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos : []);
+      materiaisPorCaminho = new Map(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos.map((item) => [item.caminho, item]) : []);
       guardarToken(sessionStorage, valor);
       token = valor;
       input.value = '';
@@ -477,7 +574,10 @@ function mostrarLista(mensagem = '', focarBusca = true): void {
   novaPasta.type = 'button';
   novaPasta.addEventListener('click', () => mostrarNovaPasta(pastaAtual));
   const acoesCriacao = elemento('div', 'lista-acoes');
-  acoesCriacao.append(novaPasta, nova);
+  const verMateriais = elemento('button', 'botao botao-sutil', 'Materiais');
+  verMateriais.type = 'button';
+  verMateriais.addEventListener('click', () => selecionarSecao('materiais'));
+  acoesCriacao.append(verMateriais, novaPasta, nova);
   topo.append(titulos, acoesCriacao);
 
   const trilha = elemento('nav', 'trilha');
@@ -551,6 +651,108 @@ function mostrarLista(mensagem = '', focarBusca = true): void {
   conteudo?.append(corpo);
   renderizar();
   if (focarBusca) busca.focus();
+}
+
+function mostrarMateriais(): void {
+  limpar();
+  montarCasca();
+  telaAtual = 'materiais';
+  nota = null;
+  casca?.classList.remove('nota-ativa');
+  lateral?.selecionarNota(null);
+  if (!arvoreMateriais.pastas.has(pastaMaterialAtual)) pastaMaterialAtual = '';
+  const pasta = arvoreMateriais.pastas.get(pastaMaterialAtual) ?? arvoreMateriais.raiz;
+  atualizarCabecalho('Materiais · Google Drive');
+  const corpo = elemento('section', 'lista-corpo materiais-corpo');
+  const topo = elemento('div', 'lista-topo');
+  const titulos = elemento('div');
+  titulos.append(
+    elemento('p', 'sobretitulo', 'CENTRAL_MATERIAIS · UFES'),
+    elemento('h1', '', pastaMaterialAtual ? pasta.nome : 'Materiais de estudo'),
+  );
+  const voltar = elemento('button', 'botao botao-sutil', 'Conhecimento');
+  voltar.type = 'button';
+  voltar.addEventListener('click', () => selecionarSecao('conhecimento'));
+  topo.append(titulos, voltar);
+  corpo.append(topo);
+
+  if (estadoMateriais.tipo !== 'pronto') {
+    corpo.append(elemento('p', 'mensagem materiais-estado', estadoMateriais.mensagem));
+    conteudo?.append(corpo);
+    return;
+  }
+
+  const atualizado = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(new Date(estadoMateriais.manifesto.geradoEm));
+  corpo.append(elemento('p', 'materiais-resumo', `${arvoreMateriais.notas.length} PDFs no Drive · atualizado em ${atualizado}`));
+  if (estadoMateriais.antigo) {
+    corpo.append(elemento('p', 'mensagem materiais-estado', 'Este índice tem mais de 7 dias. Gere-o novamente no PC e sincronize o vault.'));
+  }
+  const trilha = elemento('nav', 'trilha');
+  trilha.setAttribute('aria-label', 'Pastas dos materiais');
+  const partes = pastaMaterialAtual ? pastaMaterialAtual.split('/') : [];
+  for (let i = 0; i <= partes.length; i += 1) {
+    if (i > 0) trilha.append(elemento('span', 'trilha-separador', '/'));
+    const caminho = partes.slice(0, i).join('/');
+    const botao = elemento('button', 'trilha-item', i === 0 ? 'Materiais' : partes[i - 1]);
+    botao.type = 'button';
+    botao.disabled = caminho === pastaMaterialAtual;
+    botao.addEventListener('click', () => {
+      pastaMaterialAtual = caminho;
+      mostrarMateriais();
+    });
+    trilha.append(botao);
+  }
+  corpo.append(trilha);
+  corpo.append(elemento('p', 'contador', `${pasta.totalNotas} ${pasta.totalNotas === 1 ? 'PDF' : 'PDFs'} nesta pasta e abaixo`));
+  const lista = elemento('div', 'lista-notas');
+  const entradas = entradasDaPasta(arvoreMateriais, pastaMaterialAtual);
+  if (entradas.length === 0) lista.append(elemento('p', 'vazio', 'Nenhum PDF nesta pasta.'));
+  for (const entrada of entradas) {
+    if (entrada.tipo === 'pasta') {
+      const botao = elemento('button', 'item-nota item-pasta');
+      botao.type = 'button';
+      const texto = elemento('span', 'item-texto');
+      texto.append(elemento('span', 'item-nome', entrada.nome), elemento('span', 'item-caminho', `${entrada.totalNotas} PDFs`));
+      botao.append(elemento('span', 'item-marca', 'DIR'), texto, elemento('span', 'item-seta', '→'));
+      botao.addEventListener('click', () => {
+        pastaMaterialAtual = entrada.caminho;
+        mostrarMateriais();
+      });
+      lista.append(botao);
+      continue;
+    }
+    const material = materiaisPorCaminho.get(entrada.caminho);
+    if (!material) continue;
+    const linha = elemento('div', 'item-material');
+    linha.dataset.caminho = material.caminho;
+    const identificacao = elemento('div', 'material-identificacao');
+    identificacao.append(elemento('span', 'item-marca', 'PDF'));
+    const texto = elemento('div', 'item-texto');
+    const nome = elemento('span', 'item-nome', material.name);
+    nome.title = material.name;
+    const tamanho = elemento('span', 'item-caminho material-tamanho', tamanhoLegivel(material.size));
+    texto.append(nome, tamanho);
+    if (grandeParaLinkDireto(material)) {
+      texto.append(elemento('span', 'material-grande', 'Arquivo grande · baixar no Drive'));
+    }
+    identificacao.append(texto);
+    const acoes = elemento('div', 'material-acoes');
+    const abrir = elemento('a', 'botao botao-sutil material-abrir', 'Abrir');
+    abrir.href = urlAbrir(material);
+    abrir.target = '_blank';
+    abrir.rel = 'noopener noreferrer';
+    abrir.setAttribute('aria-label', `Abrir ${material.name} no Drive`);
+    const baixar = elemento('a', 'botao botao-sutil material-baixar', grandeParaLinkDireto(material) ? 'Baixar no Drive' : 'Baixar');
+    baixar.href = urlBaixar(material);
+    baixar.target = '_blank';
+    baixar.rel = 'noopener noreferrer';
+    baixar.setAttribute('aria-label', `Baixar ${material.name}${grandeParaLinkDireto(material) ? ' pela página do Drive' : ''}`);
+    acoes.append(abrir, baixar);
+    linha.append(identificacao, acoes);
+    lista.append(linha);
+  }
+  corpo.append(lista);
+  conteudo?.append(corpo);
 }
 
 function mostrarNovaPasta(pastaPai: string): void {
@@ -1167,13 +1369,17 @@ window.addEventListener('beforeunload', (evento) => {
 if (token) {
   iniciarBloqueio();
   mostrarCarregando('Carregando lista…');
-  listarNotasComSha(token)
-    .then((resultado) => {
+  Promise.all([listarNotasComSha(token), lerManifestoMateriais(token)])
+    .then(([resultado, materiais]) => {
       caminhos = resultado.caminhos;
       blobs = resultado.blobs;
       treeSha = resultado.treeSha;
       arvore = construirArvore(caminhos, [...pastasPendentes]);
+      estadoMateriais = materiais;
+      arvoreMateriais = construirArvoreMateriais(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos : []);
+      materiaisPorCaminho = new Map(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos.map((item) => [item.caminho, item]) : []);
       lateral?.atualizarArvore(arvore);
+      lateralMateriais?.atualizarArvore(arvoreMateriais);
       mostrarLista();
     })
     .catch((erro) => {
