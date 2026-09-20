@@ -96,7 +96,16 @@ export async function analisarRenomeacao(
       if (typeof dados.content !== 'string') throw new ErroGitHub(502, 'Blob sem conteúdo.');
       const nota = decodificarBase64(dados.content);
       let quantidade = 0;
-      const texto = nota.texto.replace(/(!?\[\[)([^\]\r\n]+)(\]\])/g, (inteiro, abertura: string, bruto: string, fechamento: string) => {
+      let cerca: { caractere: string; minimo: number } | null = null;
+      const reescreverLinha = (linha: string): string => linha.replace(/(!?\[\[)([^\]\r\n]+)(\]\])/g, (inteiro, abertura: string, bruto: string, fechamento: string, posicao: number) => {
+        // Wikilinks literais em código não navegam e não devem ser alterados.
+        const antes = linha.slice(0, posicao);
+        let delimitador = 0;
+        for (const trecho of antes.matchAll(/`+/g)) {
+          if (!delimitador) delimitador = trecho[0].length;
+          else if (delimitador === trecho[0].length) delimitador = 0;
+        }
+        if (delimitador) return inteiro;
         const alvo = analisarAlvo(bruto, abertura.startsWith('!'));
         if (alvo.alvo.split('/').at(-1)?.replace(/\.md$/i, '').toLocaleLowerCase('pt-BR') !== nomeAntigo) return inteiro;
         if (ambiguo || nota.somenteLeitura) { plano.ignorados += 1; return inteiro; }
@@ -114,6 +123,15 @@ export async function analisarRenomeacao(
         const extensao = /\.md\s*$/i.test(semSecao) ? '.md' : '';
         return `${abertura}${prefixo}${espacoInicial}${nomeNovo}${extensao}${espaco}${sufixo}${resto}${fechamento}`;
       });
+      const texto = nota.texto.split(/(?<=\n)/).map((linha) => {
+        const marcador = /^ {0,3}(`{3,}|~{3,})/.exec(linha)?.[1];
+        if (marcador) {
+          if (!cerca) cerca = { caractere: marcador[0], minimo: marcador.length };
+          else if (marcador[0] === cerca.caractere && marcador.length >= cerca.minimo && linha.trim() === marcador) cerca = null;
+          return linha;
+        }
+        return cerca ? linha : reescreverLinha(linha);
+      }).join('');
       if (quantidade) {
         plano.reescritos += quantidade;
         plano.reescritas.push({ caminho, blobSha, texto, tinhaBom: nota.tinhaBom, quantidade });
@@ -125,6 +143,50 @@ export async function analisarRenomeacao(
 
 export interface ResultadoRenomeacao extends ResultadoMovimento {
   blobsReescritos: Map<string, string>;
+}
+
+export function planejarExclusao(origem: OrigemMovimento, blobs: ReadonlyMap<string, string>): string[] {
+  if (origem.tipo === 'nota') {
+    validarCaminho(origem.caminho);
+    if (!blobs.has(origem.caminho)) throw new Error('SHA da nota indisponível. Recarregue a lista.');
+    return [origem.caminho];
+  }
+  validarPasta(origem.caminho);
+  if (!origem.caminho) throw new Error('A pasta principal não pode ser apagada.');
+  const prefixo = `${PASTA}${origem.caminho}/`;
+  const caminhos = [...blobs.keys()].filter((caminho) => caminho.startsWith(prefixo));
+  if (!caminhos.length) throw new Error('Pasta sem notas ou SHAs indisponíveis. Recarregue a lista.');
+  caminhos.forEach(validarCaminho);
+  return caminhos;
+}
+
+export interface ResultadoExclusao {
+  removidos: string[];
+  treeSha: string;
+}
+
+export async function apagar(
+  token: string, origem: OrigemMovimento, blobs: ReadonlyMap<string, string>,
+  treeShaConhecido: string, fetcher: Fetcher = fetch,
+): Promise<ResultadoExclusao> {
+  const removidos = planejarExclusao(origem, blobs);
+  if (!treeShaConhecido) throw new Error('SHA da árvore indisponível. Recarregue a lista.');
+  const ref = await requisitar(fetcher, token, `${API}/git/ref/heads/${BRANCH}`);
+  const commitAtual = shaDe(ref.object as Record<string, unknown>);
+  const commit = await requisitar(fetcher, token, `${API}/git/commits/${commitAtual}`);
+  const arvoreAtual = shaDe(commit.tree as Record<string, unknown>);
+  if (arvoreAtual !== treeShaConhecido) throw new ConflitoGitHub();
+  const entradas = removidos.map((path) => ({ path, mode: '100644', type: 'blob', sha: null }));
+  const arvore = await requisitar(fetcher, token, `${API}/git/trees`, 'POST', {
+    base_tree: arvoreAtual, tree: entradas,
+  });
+  const novaArvore = shaDe(arvore);
+  const novoCommit = await requisitar(fetcher, token, `${API}/git/commits`, 'POST', {
+    message: `notas-web: apagar ${origem.caminho} (${removidos.length} nota${removidos.length === 1 ? '' : 's'})`,
+    tree: novaArvore, parents: [commitAtual],
+  });
+  await requisitar(fetcher, token, `${API}/git/refs/heads/${BRANCH}`, 'PATCH', { sha: shaDe(novoCommit) });
+  return { removidos, treeSha: novaArvore };
 }
 
 export async function renomear(

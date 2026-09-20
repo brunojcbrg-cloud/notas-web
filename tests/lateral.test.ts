@@ -55,16 +55,23 @@ describe('casos 101–118 · coluna lateral', () => {
     ];
     const arvore = construirArvore(caminhos);
     const lateral = criarLateral(arvore, storage(), vi.fn(), vi.fn());
-    if (existsSync('E:/Obsidian/CONHECIMENTO/06_Conhecimento')) {
-      expect(contarDiretoriosDoVault()).toBe(62);
+    const pastasEsperadas = new Set<string>();
+    for (const caminho of caminhos) {
+      const partes = caminho.slice('06_Conhecimento/'.length).split('/');
+      for (let i = 1; i < partes.length; i += 1) {
+        pastasEsperadas.add(partes.slice(0, i).join('/'));
+      }
     }
-    expect(arvore.totalPastas).toBe(28);
-    expect(arvore.notas).toHaveLength(139);
-    expect(lateral.elemento.querySelectorAll('.lateral-pasta')).toHaveLength(28);
-    expect(lateral.elemento.querySelectorAll('.lateral-nota')).toHaveLength(139);
+    if (existsSync('E:/Obsidian/CONHECIMENTO/06_Conhecimento')) {
+      expect(contarDiretoriosDoVault()).toBeGreaterThanOrEqual(pastasEsperadas.size);
+    }
+    expect(arvore.totalPastas).toBe(pastasEsperadas.size);
+    expect(arvore.notas.map((nota) => nota.caminho).sort()).toEqual([...caminhos].sort());
+    expect(lateral.elemento.querySelectorAll('.lateral-pasta')).toHaveLength(pastasEsperadas.size);
+    expect(lateral.elemento.querySelectorAll('.lateral-nota')).toHaveLength(caminhos.length);
     const vistos = [...lateral.elemento.querySelectorAll<HTMLButtonElement>('.lateral-nota')]
       .map((botao) => botao.dataset.caminho);
-    expect(new Set(vistos).size).toBe(139);
+    expect(vistos.sort()).toEqual([...caminhos].sort());
   });
 
   it('102. distingue as pastas irmãs de Hipótese pelo caminho completo', () => {

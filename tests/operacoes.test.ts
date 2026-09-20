@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CaminhoExistente, ConflitoGitHub, listarNotasComSha } from '../src/github';
-import { analisarRenomeacao, mover, planejarMovimento, planejarRenomeacao, renomear } from '../src/operacoes';
+import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear } from '../src/operacoes';
 
 const P = '06_Conhecimento/';
 
@@ -109,6 +109,35 @@ describe('handoff 07 · fatia 1, somente Fetcher injetado', () => {
   });
 });
 
+describe('handoff 07 · fatia 4, apagar', () => {
+  it('134. apaga 77 notas com cinco chamadas e um único commit sem force', async () => {
+    const blobs = new Map(Array.from({ length: 77 }, (_, i) => [`${P}P3/Nota ${i}.md`, `sha-${i}`]));
+    const mock = apiFalsa();
+    const resultado = await apagar('x', { tipo: 'pasta', caminho: 'P3' }, blobs, 'tree-antiga', mock);
+    expect(resultado.removidos).toHaveLength(77);
+    expect(mock).toHaveBeenCalledTimes(5);
+    const chamadas = vi.mocked(mock).mock.calls;
+    const entradas = JSON.parse(String(chamadas[2]?.[1]?.body)).tree;
+    expect(entradas).toHaveLength(77);
+    expect(entradas.every((entrada: { sha: string | null }) => entrada.sha === null)).toBe(true);
+    expect(JSON.parse(String(chamadas[3]?.[1]?.body)).message).toContain('77 notas');
+    expect(JSON.parse(String(chamadas[4]?.[1]?.body))).toEqual({ sha: 'commit-novo' });
+  });
+
+  it('136. exclusão valida origem e recusa pasta principal', () => {
+    const blobs = new Map([[`${P}A.md`, 'sha']]);
+    expect(() => planejarExclusao({ tipo: 'nota', caminho: '05_Sistema/A.md' }, blobs)).toThrow();
+    expect(() => planejarExclusao({ tipo: 'pasta', caminho: '../fora' }, blobs)).toThrow();
+    expect(() => planejarExclusao({ tipo: 'pasta', caminho: '' }, blobs)).toThrow();
+  });
+
+  it('127. conflito no PATCH deixa exclusão recusada, sem force', async () => {
+    const mock = apiFalsa(true);
+    await expect(apagar('x', { tipo: 'nota', caminho: `${P}A.md` }, new Map([[`${P}A.md`, 'sha']]), 'tree-antiga', mock)).rejects.toBeInstanceOf(ConflitoGitHub);
+    expect(JSON.parse(String(vi.mocked(mock).mock.calls[4]?.[1]?.body))).not.toHaveProperty('force');
+  });
+});
+
 describe('handoff 07 · fatia 2, renomear e wikilinks', () => {
   const alvo = `${P}A/Antiga.md`;
   const origemLinks = `${P}B/Referências.md`;
@@ -159,6 +188,15 @@ describe('handoff 07 · fatia 2, renomear e wikilinks', () => {
     const mockCr = mockRenomear(new Map([['sha-alvo', ''], ['sha-links', 'linha\r[[Antiga]]']]));
     const planoCr = await analisarRenomeacao('x', { tipo: 'nota', caminho: alvo }, 'Nova', simples, mockCr);
     expect([planoCr.reescritos, planoCr.ignorados, planoCr.reescritas.length]).toEqual([0, 1, 0]);
+  });
+
+  it('§7. texto literal em cercas e código inline fica intacto', async () => {
+    const blobs = new Map([[alvo, 'sha-alvo'], [origemLinks, 'sha-links']]);
+    const texto = '[[Antiga]]\n`[[Antiga]]`\n```md\n[[Antiga]]\n```\n';
+    const mock = mockRenomear(new Map([['sha-alvo', ''], ['sha-links', texto]]));
+    const plano = await analisarRenomeacao('x', { tipo: 'nota', caminho: alvo }, 'Nova', blobs, mock);
+    expect(plano.reescritas[0].texto).toBe('[[Nova]]\n`[[Antiga]]`\n```md\n[[Antiga]]\n```\n');
+    expect([plano.reescritos, plano.ignorados]).toEqual([1, 0]);
   });
 
   it('130. só trocar maiúscula é renomeação real; destino ocupado e caminhos inválidos são recusados', () => {

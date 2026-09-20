@@ -19,7 +19,7 @@ def certificar(navegador, url: str) -> bool:
         if not passou:
             falhas.append(numero)
 
-    def contexto_falso(largura=1280, conflito=False, relogio=False, links=False, homonimo=False):
+    def contexto_falso(largura=1280, conflito=False, relogio=False, links=False, homonimo=False, irma=False):
         contexto = navegador.new_context(viewport={"width": largura, "height": 900})
         pagina = contexto.new_page()
         if relogio:
@@ -27,10 +27,10 @@ def certificar(navegador, url: str) -> bool:
         erros: list[str] = []
         pagina.on("pageerror", lambda erro: erros.append(str(erro)))
         estado = {
-            "blobs": {NOTA: "blob-nota", f"{P}B/Outra.md": "blob-outra", **({f"{P}C/Nota.md": "blob-homonimo"} if homonimo else {}), **{
+            "blobs": {NOTA: "blob-nota", f"{P}B/Outra.md": "blob-outra", **({f"{P}C/Nota.md": "blob-homonimo"} if homonimo else {}), **({f"{P}A/Irmã.md": "blob-irma"} if irma else {}), **{
                 f"{P}Genética/P3/Nota {i}.md": f"blob-p3-{i}" for i in range(77)
             }},
-            "bytes": {"blob-nota": b"# Nota original\n", "blob-outra": (b"\xef\xbb\xbf# Outra\r\n" + b"[[Nota#Sec|alias]]\r\n" * 169 + b"fim") if links else b"# Outra\n", "blob-homonimo": b"# Homonimo\n", **{
+            "bytes": {"blob-nota": b"# Nota original\n", "blob-outra": (b"\xef\xbb\xbf# Outra\r\n" + b"[[Nota#Sec|alias]]\r\n" * 169 + b"fim") if links else b"# Outra\n", "blob-homonimo": b"# Homonimo\n", "blob-irma": b"# Irma\n", **{
                 f"blob-p3-{i}": f"# Nota {i}\n".encode() for i in range(77)
             }},
             "tree_sha": "tree-inicial", "commit_sha": "commit-inicial",
@@ -310,6 +310,48 @@ def certificar(navegador, url: str) -> bool:
                  "pendente" in rotulo.lower() and any("desaparecerá" in aviso for aviso in avisos)
                  and pagina.locator('.lateral-pasta[data-caminho="Leituras"]').count() == 0
                  and not estado["puts"] and not estado["calls"] and not erros)
+    finally:
+        contexto.close()
+
+    contexto, pagina, estado, erros = contexto_falso()
+    try:
+        avisos = []
+        pagina.once("dialog", lambda dialogo: (avisos.append(dialogo.message), dialogo.accept()))
+        pagina.locator('.lateral-pasta[data-caminho="Genética"]').click()
+        pagina.locator('.lateral-pasta[data-caminho="Genética/P3"]').click(button="right")
+        pagina.get_by_role("menuitem", name="Apagar").click()
+        pagina.wait_for_function("() => !document.querySelector('.lateral-pasta[data-caminho=\"Genética/P3\"]')")
+        chamadas = estado["calls"]
+        verificar(134, "apagar P3 confirma 77 notas e histórico; cinco chamadas, um commit",
+                 len(chamadas) == 5 and len(chamadas[2][2]["tree"]) == 77
+                 and all(entrada["sha"] is None for entrada in chamadas[2][2]["tree"])
+                 and len([c for c in chamadas if c[0] == "POST" and c[1].endswith("/git/commits")]) == 1
+                 and "force" not in chamadas[-1][2]
+                 and all(f"{P}Genética/P3/Nota {i}.md" not in estado["blobs"] for i in range(77))
+                 and avisos and "77 notas" in avisos[0] and "histórico" in avisos[0] and not erros,
+                 f"{len(chamadas)} chamadas Git Data")
+    finally:
+        contexto.close()
+
+    contexto, pagina, estado, erros = contexto_falso(irma=True)
+    try:
+        avisos = []
+        pagina.locator('.lateral-pasta[data-caminho="A"]').click()
+        pagina.locator(f'.lateral-nota[data-caminho="{NOTA}"]').click()
+        pagina.locator(".cm-content").click()
+        pagina.keyboard.press("End")
+        pagina.keyboard.type(" edição não salva")
+        pagina.evaluate("() => { window.__lateralAntesApagar = document.querySelector('.lateral'); }")
+        pagina.once("dialog", lambda dialogo: (avisos.append(dialogo.message), dialogo.accept()))
+        pagina.locator(f'.lateral-nota[data-caminho="{NOTA}"]').click(button="right")
+        pagina.get_by_role("menuitem", name="Apagar").click()
+        pagina.locator(".lista-corpo").wait_for(state="visible")
+        verificar(135, "apagar nota aberta fecha editor, volta à pasta e avisa sobre edição não salva",
+                 NOTA not in estado["blobs"] and pagina.locator(".cm-editor").count() == 0
+                 and pagina.locator(".lista-corpo h1").inner_text() == "A"
+                 and pagina.evaluate("() => window.__lateralAntesApagar === document.querySelector('.lateral')")
+                 and avisos and "edição aberta não gravada será perdida" in avisos[0]
+                 and "histórico" in avisos[0] and not erros)
     finally:
         contexto.close()
 

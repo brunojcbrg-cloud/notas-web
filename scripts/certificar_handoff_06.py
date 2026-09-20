@@ -17,6 +17,12 @@ def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
         PREFIXO + arquivo.relative_to(RAIZ_VAULT).as_posix()
         for arquivo in RAIZ_VAULT.rglob("*.md")
     )
+    pastas_esperadas = {
+        "/".join(partes[:indice])
+        for caminho in caminhos
+        for partes in [caminho.removeprefix(PREFIXO).split("/")]
+        for indice in range(1, len(partes))
+    }
     p3 = [c for c in caminhos if "/Genética/P3/" in c]
     nota_a, nota_b = p3[:2]
     nome_b = Path(nota_b).stem
@@ -61,11 +67,17 @@ def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
 
     contexto, pagina, erros = abrir_contexto(1280)
     try:
-        pastas = pagina.locator(".lateral-pasta").count()
-        notas = pagina.locator(".lateral-nota").count()
+        pastas = pagina.locator(".lateral-pasta").evaluate_all(
+            "elementos => elementos.map(el => el.dataset.caminho)"
+        )
+        notas = pagina.locator(".lateral-nota").evaluate_all(
+            "elementos => elementos.map(el => el.dataset.caminho)"
+        )
         shell_unica = pagina.evaluate("() => document.querySelector('#app').children.length === 1 && document.querySelector('.cabecalho').getBoundingClientRect().top === 0")
-        verificar(101, "árvore real sem duplicatas e casca única", pastas == 28 and notas == 139 and shell_unica and not erros,
-                 f"{pastas} pastas com notas, {notas} notas; 62 diretórios físicos no vault")
+        verificar(101, "árvore real sem duplicatas e casca única",
+                 sorted(pastas) == sorted(pastas_esperadas) and sorted(notas) == caminhos
+                 and shell_unica and not erros,
+                 f"{len(pastas)} pastas com notas, {len(notas)} notas")
         verificar(102, "pastas irmãs com nomes quase iguais distintas",
                  pagina.locator('.lateral-pasta[data-caminho="Hipótese de Dois eventos"]').count() == 1
                  and pagina.locator('.lateral-pasta[data-caminho="Hipótese de \'\'Dois eventos"]').count() == 1)
@@ -79,7 +91,7 @@ def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
         rolagem = pagina.locator(".lateral-arvore").evaluate(
             "el => ({total: el.scrollHeight, visivel: el.clientHeight})"
         )
-        verificar(113, "todas as pastas abertas sem virtualização", linhas == 167 and rolagem["total"] > rolagem["visivel"],
+        verificar(113, "todas as pastas abertas sem virtualização", linhas == len(caminhos) + len(pastas_esperadas) and rolagem["total"] > rolagem["visivel"],
                  f"{linhas} linhas, rolagem {rolagem['total']} px")
 
         pagina.evaluate("""() => {

@@ -17,7 +17,7 @@ import {
 } from './github';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
 import { criarLateral, type Lateral } from './lateral';
-import { analisarRenomeacao, mover, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
+import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
 import { configurarLivePreview, livePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
@@ -285,6 +285,7 @@ function montarCasca(): void {
       mostrarCriacao();
     },
     (pasta) => mostrarNovaPasta(pasta),
+    (origem) => void apagarInterativo(origem),
   );
   lateral.elemento.id = 'explorador-notas';
   conteudo = elemento('main', 'app-conteudo');
@@ -814,6 +815,60 @@ async function renomearInterativo(origem: OrigemMovimento): Promise<void> {
     if (nota && telaAtual === 'nota') mostrarNota();
     else if (telaAtual === 'lista') mostrarLista('', false);
     window.alert(`Renomeado. ${plano.reescritos} wikilink(s) reescritos; ${plano.ignorados} ficaram de fora.`);
+  } catch (erro) {
+    if (erro instanceof ConflitoGitHub) {
+      if (window.confirm('O repositório mudou durante a operação. Recarregar a página para obter a versão nova?')) window.location.reload();
+    } else window.alert(erroSeguro(erro));
+  } finally { movendo = false; }
+}
+
+async function apagarInterativo(origem: OrigemMovimento): Promise<void> {
+  if (!token || movendo) return;
+  const pendente = origem.tipo === 'pasta' && pastasPendentes.has(origem.caminho);
+  let removidos: string[];
+  try { removidos = pendente ? [] : planejarExclusao(origem, blobs); }
+  catch (erro) { window.alert(erroSeguro(erro)); return; }
+  const notaAfetada = Boolean(nota && removidos.includes(nota.caminho));
+  const nome = origem.caminho.split('/').at(-1) as string;
+  const aviso = pendente
+    ? `Apagar a pasta pendente “${nome}”? Ela ainda não foi gravada no repositório.`
+    : origem.tipo === 'pasta'
+      ? `Apagar “${nome}” e as ${removidos.length} notas dentro dela?`
+      : `Apagar a nota “${nome}”?`;
+  const historico = pendente ? '' : '\nO conteúdo poderá ser recuperado pelo histórico do repositório.';
+  const edicao = notaAfetada && temAlteracoes() ? '\nA edição aberta não gravada será perdida.' : '';
+  if (!window.confirm(`${aviso}${historico}${edicao}`)) return;
+  movendo = true;
+  try {
+    if (pendente) {
+      for (const pasta of pastasPendentes) {
+        if (pasta === origem.caminho || pasta.startsWith(`${origem.caminho}/`)) pastasPendentes.delete(pasta);
+      }
+    } else {
+      if (!treeSha) {
+        const lista = await listarNotasComSha(token);
+        caminhos = lista.caminhos; blobs = lista.blobs; treeSha = lista.treeSha;
+        removidos = planejarExclusao(origem, blobs);
+      }
+      const resultado = await apagar(token, origem, blobs, treeSha);
+      const removidosSet = new Set(resultado.removidos);
+      caminhos = caminhos.filter((caminho) => !removidosSet.has(caminho));
+      for (const caminho of resultado.removidos) blobs.delete(caminho);
+      treeSha = resultado.treeSha;
+    }
+    if (origem.tipo === 'pasta') {
+      const pai = origem.caminho.split('/').slice(0, -1).join('/');
+      const dentro = (pasta: string): boolean => pasta === origem.caminho || pasta.startsWith(`${origem.caminho}/`);
+      if (dentro(pastaAtual)) pastaAtual = pai;
+      if (dentro(pastaRetorno)) pastaRetorno = pai;
+    }
+    if (notaAfetada && nota) {
+      pastaAtual = origem.tipo === 'nota' ? pastaDaNota(origem.caminho) : pastaAtual;
+      nota = null;
+    }
+    arvore = construirArvore(caminhos, [...pastasPendentes]);
+    lateral?.atualizarArvore(arvore);
+    if (notaAfetada || telaAtual === 'lista') mostrarLista('', false);
   } catch (erro) {
     if (erro instanceof ConflitoGitHub) {
       if (window.confirm('O repositório mudou durante a operação. Recarregar a página para obter a versão nova?')) window.location.reload();

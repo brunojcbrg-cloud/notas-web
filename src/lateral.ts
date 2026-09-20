@@ -62,6 +62,7 @@ export function criarLateral(
   aoRenomear?: (origem: OrigemMovimento) => void,
   aoCriarNota?: (pasta: string) => void,
   aoCriarPasta?: (pasta: string) => void,
+  aoApagar?: (origem: OrigemMovimento) => void,
 ): Lateral {
   let arvore = arvoreInicial;
   const estado = lerEstadoLateral(storage, arvore, abertaPadrao);
@@ -107,6 +108,7 @@ export function criarLateral(
       ['Renomear', () => aoRenomear?.(origem)],
       ['Nova nota aqui', () => aoCriarNota?.(origem.tipo === 'nota' ? pastaDaNota(origem.caminho) : origem.caminho)],
       ['Nova pasta aqui', () => aoCriarPasta?.(origem.tipo === 'nota' ? pastaDaNota(origem.caminho) : origem.caminho)],
+      ['Apagar', () => aoApagar?.(origem)],
     ] as const) {
       if (pendente && (rotulo === 'Mover para…' || rotulo === 'Renomear')) continue;
       const botao = document.createElement('button');
