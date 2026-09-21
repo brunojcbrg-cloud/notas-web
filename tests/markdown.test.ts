@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   acaoWikilink,
+  acharWikilinks,
+  posicaoDaSecao,
   recortarSecao,
   renderizarMarkdown,
   resolverWikilink,
@@ -204,5 +206,72 @@ describe('casos 52–57 · seções da própria nota', () => {
     const css = readFileSync(join(process.cwd(), 'src', 'style.css'), 'utf8');
     expect(css).toMatch(/\.nota-link\s*\{[^}]*text-decoration:\s*none/);
     expect(css).not.toMatch(/\.nota-link[^}]*text-decoration-(?:style|line)/);
+  });
+});
+
+describe('wikilink no modo ao vivo · igualdade com o modo leitura', () => {
+  it('acha o wikilink simples e aponta o texto visível', () => {
+    const achados = acharWikilinks('veja [[Nota]] aqui');
+    expect(achados).toHaveLength(1);
+    expect(achados[0].de).toBe(5);
+    expect(achados[0].ate).toBe(13);
+    expect('veja [[Nota]] aqui'.slice(achados[0].deTexto, achados[0].ateTexto)).toBe('Nota');
+    expect(achados[0].alvo.alvo).toBe('Nota');
+  });
+
+  it('com apelido, o visível é o apelido', () => {
+    const texto = '[[Nota|outro nome]]';
+    const [achado] = acharWikilinks(texto);
+    expect(texto.slice(achado.deTexto, achado.ateTexto)).toBe('outro nome');
+    expect(achado.alvo.alvo).toBe('Nota');
+  });
+
+  it('wikilink de seção mantém o sustenido à vista e não tem alvo', () => {
+    const texto = '[[#Esporos]]';
+    const [achado] = acharWikilinks(texto);
+    expect(texto.slice(achado.deTexto, achado.ateTexto)).toBe('#Esporos');
+    expect(achado.alvo.alvo).toBe('');
+    expect(achado.alvo.secao).toBe('Esporos');
+  });
+
+  it('espaço em volta do apelido não entra no visível', () => {
+    const texto = '[[Nota|  com folga  ]]';
+    const [achado] = acharWikilinks(texto);
+    expect(texto.slice(achado.deTexto, achado.ateTexto)).toBe('com folga');
+  });
+
+  it('embed de imagem não é wikilink de texto', () => {
+    expect(acharWikilinks('![[foto.png]]')).toHaveLength(0);
+    expect(acharWikilinks('![[foto.png|496]]')).toHaveLength(0);
+  });
+
+  it('dois na mesma linha, com as posições certas', () => {
+    const texto = '[[Um]] e [[Dois]]';
+    const achados = acharWikilinks(texto);
+    expect(achados.map((a) => texto.slice(a.deTexto, a.ateTexto))).toEqual(['Um', 'Dois']);
+    expect(achados[1].de).toBe(9);
+  });
+
+  it('colchete solto ou vazio não vira wikilink', () => {
+    expect(acharWikilinks('[[sem fechamento')).toHaveLength(0);
+    expect(acharWikilinks('[[]]')).toHaveLength(0);
+    expect(acharWikilinks('[[   ]]')).toHaveLength(0);
+    expect(acharWikilinks('[[a[b]]')).toHaveLength(0);
+  });
+
+  it('o deslocamento base entra nas posições', () => {
+    const [achado] = acharWikilinks('[[Nota]]', 100);
+    expect(achado.de).toBe(100);
+    expect(achado.ate).toBe(108);
+    expect(achado.deTexto).toBe(102);
+  });
+
+  it('a seção é achada pela posição no texto, para o editor rolar até ela', () => {
+    const nota = 'intro\n\n# Um\ncorpo\n\n## Esporos\nfim';
+    expect(posicaoDaSecao(nota, 'Esporos')).toBe(nota.indexOf('## Esporos'));
+    expect(posicaoDaSecao(nota, 'esporos')).toBe(nota.indexOf('## Esporos'));
+    expect(posicaoDaSecao(nota, 'Um')).toBe(nota.indexOf('# Um'));
+    expect(posicaoDaSecao(nota, 'nao existe')).toBeNull();
+    expect(posicaoDaSecao(nota, '')).toBeNull();
   });
 });

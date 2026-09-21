@@ -42,6 +42,88 @@ export function larguraDoRotulo(rotulo: string): number | null {
   return Number.isFinite(largura) && largura > 0 ? largura : null;
 }
 
+/**
+ * Onde começa a linha do título [secao], em caracteres. Nulo se não existir.
+ *
+ * O modo leitura rola pelo DOM (`rolarParaSecao`); o modo ao vivo é um editor de
+ * texto e precisa da posição no documento.
+ */
+export function posicaoDaSecao(texto: string, secao: string): number | null {
+  const alvo = secao.replace(/^\^/, '').trim().toLowerCase();
+  if (!alvo) return null;
+  const linhas = texto.split(/\r\n|\r|\n/);
+  let posicao = 0;
+  for (const linha of linhas) {
+    const m = /^(#{1,6})\s+(.*)$/.exec(linha);
+    if (m && m[2].trim().toLowerCase() === alvo) return posicao;
+    posicao += linha.length + 1;
+  }
+  return null;
+}
+
+export interface WikilinkNoTexto {
+  /** Posição do primeiro `[`. */
+  de: number;
+  /** Posição logo depois do último `]`. */
+  ate: number;
+  /** Onde começa o texto que o leitor vê. */
+  deTexto: number;
+  /** Onde termina o texto que o leitor vê. */
+  ateTexto: number;
+  alvo: AlvoWikilink;
+}
+
+/**
+ * Acha os wikilinks de um trecho, com as posições do que fica visível.
+ *
+ * Mesmas guardas de `regraWikilink`, que é quem monta o modo leitura: os dois
+ * modos têm de concordar sobre o que é wikilink, senão a mesma nota aparece
+ * diferente conforme o botão que está apertado. Embed de imagem (`![[…]]`) não
+ * entra aqui — quem cuida dele é `anexos.ts`.
+ */
+export function acharWikilinks(texto: string, base = 0): WikilinkNoTexto[] {
+  const achados: WikilinkNoTexto[] = [];
+  let i = 0;
+  while (i < texto.length - 1) {
+    if (texto.charCodeAt(i) !== 0x5b || texto.charCodeAt(i + 1) !== 0x5b) {
+      i += 1;
+      continue;
+    }
+    if (i > 0 && texto.charCodeAt(i - 1) === 0x21) {
+      i += 2;
+      continue;
+    }
+    const fim = texto.indexOf(']]', i + 2);
+    if (fim < 0) break;
+    const bruto = texto.slice(i + 2, fim);
+    if (!bruto.trim() || bruto.includes('\n') || bruto.includes('[')) {
+      i += 2;
+      continue;
+    }
+    const alvo = analisarAlvo(bruto, false);
+    if (!alvo.alvo && !alvo.secao) {
+      i += 2;
+      continue;
+    }
+    // O visível é o apelido, quando existe, e o alvo com a seção quando não.
+    const barra = bruto.indexOf('|');
+    const inicioCru = barra < 0 ? 0 : barra + 1;
+    const fimCru = barra < 0 ? bruto.length : bruto.length;
+    const recorte = bruto.slice(inicioCru, fimCru);
+    const espacosAntes = recorte.length - recorte.trimStart().length;
+    const espacosDepois = recorte.length - recorte.trimEnd().length;
+    achados.push({
+      de: base + i,
+      ate: base + fim + 2,
+      deTexto: base + i + 2 + inicioCru + espacosAntes,
+      ateTexto: base + i + 2 + fimCru - espacosDepois,
+      alvo,
+    });
+    i = fim + 2;
+  }
+  return achados;
+}
+
 function escapar(texto: string): string {
   return texto
     .replace(/&/g, '&amp;')

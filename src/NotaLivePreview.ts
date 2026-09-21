@@ -6,6 +6,7 @@
  * sob responsabilidade de NotaBytes.ts.
  */
 import { syntaxTree } from '@codemirror/language';
+import type { SyntaxNode } from '@lezer/common';
 import {
   Compartment,
   RangeSetBuilder,
@@ -20,6 +21,19 @@ import {
   type ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
+import { acharWikilinks } from './markdown';
+
+/**
+ * O modo ao vivo tem de mostrar o mesmo que o modo leitura -- a diferença é que
+ * nele dá para editar. Wikilink é a primeira peça dessa igualdade: sem isto os
+ * colchetes ficavam à mostra e o clique não levava a lugar nenhum.
+ */
+export interface OpcoesLivePreview {
+  /** Devolve o caminho da nota apontada, ou nulo quando ela não existe. */
+  resolver?: (alvo: string) => string | null;
+  /** Chamado no clique. Quem navega é a tela, não a extensão. */
+  aoAbrir?: (alvo: string, secao: string) => void;
+}
 
 const MARCAS_OCULTAVEIS = new Set(['HeaderMark', 'EmphasisMark', 'CodeMark', 'QuoteMark']);
 const MARCAS_VISIVEIS = new Set(['LinkMark']);
@@ -69,8 +83,18 @@ const CLASSES: Record<string, string> = {
   InlineCode: 'cm-lp-codigo',
 };
 
-export function livePreview(): Extension {
-  return ViewPlugin.fromClass(
+/** Dentro de código o texto é literal: ali `[[x]]` não é wikilink. */
+function dentroDeCodigo(arvore: ReturnType<typeof syntaxTree>, posicao: number): boolean {
+  let no: SyntaxNode | null = arvore.resolveInner(posicao, 1);
+  while (no) {
+    if (no.name.includes('Code')) return true;
+    no = no.parent;
+  }
+  return false;
+}
+
+export function livePreview(opcoes: OpcoesLivePreview = {}): Extension {
+  const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet = Decoration.none;
 
@@ -191,6 +215,44 @@ export function livePreview(): Extension {
               return undefined;
             },
           });
+
+          const primeira = state.doc.lineAt(visivel.from).number;
+          const ultima = state.doc.lineAt(visivel.to).number;
+          for (let numero = primeira; numero <= ultima; numero += 1) {
+            const linha = state.doc.line(numero);
+            const linhaTocada = state.selection.ranges.some(
+              (selecao) => selecao.from <= linha.to && selecao.to >= linha.from,
+            );
+            for (const achado of acharWikilinks(linha.text, linha.from)) {
+              if (dentroDeCodigo(arvore, achado.de)) continue;
+              // Wikilink de seção (`[[#Titulo]]`) aponta para a nota aberta:
+              // ela existe por definição, e nunca pode sair marcada de vermelho.
+              const existe = achado.alvo.alvo
+                ? (opcoes.resolver?.(achado.alvo.alvo) ?? null) !== null
+                : true;
+              ranges.push(
+                Decoration.mark({
+                  class: existe ? 'cm-lp-wikilink' : 'cm-lp-wikilink cm-lp-wikilink-faltante',
+                  attributes: {
+                    'data-wikilink': achado.alvo.alvo,
+                    'data-wikilink-secao': achado.alvo.secao,
+                  },
+                }).range(achado.deTexto, achado.ateTexto),
+              );
+              // Com o cursor na linha os colchetes voltam: é onde ele edita.
+              if (linhaTocada) {
+                ranges.push(
+                  Decoration.mark({ class: 'cm-lp-marcador' }).range(achado.de, achado.deTexto),
+                  Decoration.mark({ class: 'cm-lp-marcador' }).range(achado.ateTexto, achado.ate),
+                );
+              } else {
+                const abre = Decoration.replace({}).range(achado.de, achado.deTexto);
+                const fecha = Decoration.replace({}).range(achado.ateTexto, achado.ate);
+                ranges.push(abre, fecha);
+                substituicoes.push(abre, fecha);
+              }
+            }
+          }
         }
 
         nivelDeLista.forEach((nivel, from) => {
@@ -222,15 +284,34 @@ export function livePreview(): Extension {
     },
     { decorations: (plugin) => plugin.decorations },
   );
+
+  return [
+    plugin,
+    EditorView.domEventHandlers({
+      mousedown(evento) {
+        const abrir = opcoes.aoAbrir;
+        if (!abrir) return false;
+        const alvoDoEvento = evento.target;
+        if (!(alvoDoEvento instanceof Element)) return false;
+        const elo = alvoDoEvento.closest<HTMLElement>('[data-wikilink]');
+        if (!elo) return false;
+        // Sem isto o clique só moveria o cursor, que é o que acontecia antes.
+        evento.preventDefault();
+        abrir(elo.dataset.wikilink ?? '', elo.dataset.wikilinkSecao ?? '');
+        return true;
+      },
+    }),
+  ];
 }
 
 export function configurarLivePreview(
   view: EditorView,
   compartimento: Compartment,
   ativo: boolean,
+  opcoes: OpcoesLivePreview = {},
 ): void {
   view.dispatch({
-    effects: compartimento.reconfigure(ativo ? livePreview() : []),
+    effects: compartimento.reconfigure(ativo ? livePreview(opcoes) : []),
   });
 }
 

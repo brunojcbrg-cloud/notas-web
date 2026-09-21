@@ -29,9 +29,9 @@ import {
   type Material,
 } from './materiais';
 import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
-import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
+import { acaoWikilink, posicaoDaSecao, renderizarMarkdown, resolverWikilink, rolarParaSecao } from './markdown';
 import { hidratarImagens, listarAnexos } from './anexos';
-import { configurarLivePreview, livePreview } from './NotaLivePreview';
+import { configurarLivePreview, livePreview, type OpcoesLivePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { guardarToken, lerToken, sair } from './session';
 import {
@@ -1152,7 +1152,7 @@ function mostrarNota(
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     preservarQuebras(nota.texto, nota.eol),
     compartimentoTema.of(realceMarkdown(paletaEfetiva(preferenciaTema, sistemaEscuro()))),
-    compartimentoPreview.of(modoInicial === 'preview' ? livePreview() : []),
+    compartimentoPreview.of(modoInicial === 'preview' ? livePreview(opcoesDoAoVivo()) : []),
     EditorView.lineWrapping,
     EditorView.updateListener.of((atualizacao) => {
       if (atualizacao.docChanged) atualizarEstado();
@@ -1218,7 +1218,7 @@ function mostrarNota(
     editor?.focus();
   };
   const ativarPreview = (): void => {
-    if (editor) configurarLivePreview(editor, compartimentoPreview, true);
+    if (editor) configurarLivePreview(editor, compartimentoPreview, true, opcoesDoAoVivo());
     editor?.dispatch({ effects: compartimentoNumeros.reconfigure([]) });
     editorHost.dataset.modo = 'preview';
     editorHost.hidden = false;
@@ -1226,6 +1226,40 @@ function mostrarNota(
     marcarModo(preview);
     editor?.focus();
   };
+  /**
+   * O modo ao vivo resolve e navega com as mesmas regras do modo leitura.
+   * Wikilink de seção sem alvo aponta para a nota aberta.
+   */
+  function opcoesDoAoVivo(): OpcoesLivePreview {
+    return {
+      resolver: (alvo) => resolverWikilink(caminhos, nota?.caminho ?? '', alvo),
+      aoAbrir: (alvo, secao) => {
+        const atual = nota?.caminho ?? '';
+        const destino = alvo ? resolverWikilink(caminhos, atual, alvo) : atual;
+        const acao = acaoWikilink(destino, secao);
+        if (acao.tipo === 'faltante') {
+          window.alert(`Nota não encontrada: ${alvo}`);
+          return;
+        }
+        if (acao.caminho === atual && acao.secao) {
+          if (!editor) return;
+          const posicao = posicaoDaSecao(textoExato(editor.state), acao.secao);
+          if (posicao === null) {
+            window.alert(`Seção não encontrada: ${acao.secao}`);
+            return;
+          }
+          editor.dispatch({
+            selection: { anchor: posicao },
+            effects: EditorView.scrollIntoView(posicao, { y: 'start' }),
+          });
+          return;
+        }
+        if (!confirmarDescarte()) return;
+        void abrirNota(acao.caminho, acao.secao, 'preview', pastaDaNota(acao.caminho));
+      },
+    };
+  }
+
   const ativarLeitura = (secaoAlvo = ''): void => {
     if (!editor || !nota) return;
     try {

@@ -226,6 +226,10 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .leitura-markdown th, .leitura-markdown td { padding: 8px 10px; border: 1px solid var(--linha-forte); text-align: left; }
 .leitura-markdown th { background: var(--folha-baixa); }
 .nota-link { text-decoration: none; }
+/* O modo ao vivo pinta o wikilink igual ao modo leitura: mesma cor, sem
+   sublinhado, e vermelho quando a nota apontada não existe. */
+.cm-lp-wikilink { color: var(--tinta); cursor: pointer; }
+.cm-lp-wikilink-faltante { color: var(--perigo); }
 .nota-link-faltante { color: var(--perigo) !important; }
 .nota-imagem { max-width: 100%; height: auto; display: block; margin: 0.6rem 0; border-radius: 4px; }
 .nota-imagem-faltante { min-height: 1.2rem; padding: 0.3rem 0.5rem; border: 1px dashed var(--perigo); color: var(--perigo); font-size: 0.85rem; }

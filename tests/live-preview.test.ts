@@ -371,3 +371,70 @@ describe('casos 83–100 · Ao vivo igual Leitura', () => {
     expect(reporter).toContain('erros.length !== 0');
   });
 });
+
+describe('wikilink no modo ao vivo · igual ao modo leitura', () => {
+  function criarComOpcoes(texto: string, opcoes: Parameters<typeof livePreview>[0]): EditorView {
+    const host = document.createElement('div');
+    document.body.append(host);
+    view = new EditorView({
+      state: EditorState.create({
+        doc: texto,
+        extensions: [markdown(), preservarQuebras(texto, 'lf'), livePreview(opcoes)],
+      }),
+      parent: host,
+    });
+    return view;
+  }
+
+  it('esconde os colchetes e pinta o wikilink, como na leitura', () => {
+    // O wikilink fica longe do cursor (que nasce em 0): com o cursor na linha
+    // os colchetes voltam de proposito, que e o caso do teste seguinte.
+    const editor = criarComOpcoes('primeira\n\nveja [[Outra Nota]] aqui\n', {
+      resolver: () => '06_Conhecimento/Outra Nota.md',
+    });
+    const elo = document.querySelector('.cm-lp-wikilink');
+    expect(elo).not.toBeNull();
+    expect(elo?.textContent).toBe('Outra Nota');
+    expect(elo?.classList.contains('cm-lp-wikilink-faltante')).toBe(false);
+    // Os colchetes saem da tela, mas nao do documento.
+    expect(editor.dom.textContent).not.toContain('[[');
+    expect(textoExato(editor.state)).toContain('[[Outra Nota]]');
+  });
+
+  it('nota que nao existe sai marcada, e a de secao nunca sai', () => {
+    criarComOpcoes('[[Sumida]]\n\n[[#Esporos]]\n', { resolver: () => null });
+    const elos = [...document.querySelectorAll('.cm-lp-wikilink')];
+    expect(elos).toHaveLength(2);
+    expect(elos[0].textContent).toBe('Sumida');
+    expect(elos[0].classList.contains('cm-lp-wikilink-faltante')).toBe(true);
+    expect(elos[1].textContent).toBe('#Esporos');
+    expect(elos[1].classList.contains('cm-lp-wikilink-faltante')).toBe(false);
+  });
+
+  it('o clique avisa a tela com o alvo e a secao, em vez de so mover o cursor', () => {
+    const cliques: Array<[string, string]> = [];
+    criarComOpcoes('[[Nota Alvo#Parte]]\n', {
+      resolver: () => '06_Conhecimento/Nota Alvo.md',
+      aoAbrir: (alvo, secao) => { cliques.push([alvo, secao]); },
+    });
+    const elo = document.querySelector('.cm-lp-wikilink') as HTMLElement;
+    elo.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    expect(cliques).toEqual([['Nota Alvo', 'Parte']]);
+  });
+
+  it('wikilink dentro de codigo continua texto cru', () => {
+    criarComOpcoes('`[[Nota]]`\n\n```\n[[Outra]]\n```\n', { resolver: () => 'x.md' });
+    expect(document.querySelector('.cm-lp-wikilink')).toBeNull();
+  });
+
+  it('com o cursor na linha os colchetes voltam, para ele poder editar', () => {
+    const editor = criarComOpcoes('[[Nota]]\n\noutra linha\n', { resolver: () => 'x.md' });
+    editor.dispatch({ selection: { anchor: 3 } });
+    expect(editor.dom.textContent).toContain('[[');
+  });
+
+  it('embed de imagem nao vira wikilink no ao vivo', () => {
+    criarComOpcoes('![[foto.png|496]]\n', { resolver: () => 'x.png' });
+    expect(document.querySelector('.cm-lp-wikilink')).toBeNull();
+  });
+})
