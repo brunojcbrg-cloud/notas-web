@@ -438,3 +438,108 @@ describe('wikilink no modo ao vivo · igual ao modo leitura', () => {
     expect(document.querySelector('.cm-lp-wikilink')).toBeNull();
   });
 })
+
+describe('imagem no modo ao vivo', () => {
+  function criarComImagem(
+    texto: string,
+    carregar: (alvo: string) => Promise<string | null>,
+  ): EditorView {
+    const host = document.createElement('div');
+    document.body.append(host);
+    view = new EditorView({
+      state: EditorState.create({
+        doc: texto,
+        extensions: [markdown(), preservarQuebras(texto, 'lf'), livePreview({ imagem: carregar })],
+      }),
+      parent: host,
+    });
+    return view;
+  }
+
+  const DATA_URL = 'data:image/png;base64,iVBORw0KGgo=';
+  const microtarefas = (): Promise<void> => new Promise((resolver) => setTimeout(resolver, 0));
+
+  it('o embed de imagem vira <img>, e o texto continua no documento', async () => {
+    // Longe do cursor (que nasce em 0), porque a linha tocada mostra o cru.
+    const editor = criarComImagem('primeira\n\n![[foto.png]]\n', async () => DATA_URL);
+    const img = document.querySelector('img.cm-lp-imagem') as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.alt).toBe('foto.png');
+    await microtarefas();
+    expect(img.getAttribute('src')).toBe(DATA_URL);
+    expect(editor.dom.textContent).not.toContain('![[');
+    expect(textoExato(editor.state)).toBe('primeira\n\n![[foto.png]]\n');
+  });
+
+  it('o rotulo numerico vira largura, como no modo leitura', async () => {
+    criarComImagem('primeira\n\n![[foto.png|496]]\n', async () => DATA_URL);
+    const img = document.querySelector('img.cm-lp-imagem') as HTMLImageElement;
+    expect(img.style.width).toBe('496px');
+    expect(img.alt).toBe('foto.png');
+    await microtarefas();
+  });
+
+  it('o rotulo de texto vira alt', async () => {
+    criarComImagem('primeira\n\n![[foto.png|corte sagital]]\n', async () => DATA_URL);
+    const img = document.querySelector('img.cm-lp-imagem') as HTMLImageElement;
+    expect(img.alt).toBe('corte sagital');
+    expect(img.style.width).toBe('');
+    await microtarefas();
+  });
+
+  it('com o cursor na linha o texto cru volta, para ele poder editar', async () => {
+    const editor = criarComImagem('![[foto.png]]\n\noutra\n', async () => DATA_URL);
+    expect(document.querySelector('img.cm-lp-imagem')).toBeNull();
+    expect(editor.dom.textContent).toContain('![[foto.png]]');
+    editor.dispatch({ selection: { anchor: 16 } });
+    await microtarefas();
+    expect(document.querySelector('img.cm-lp-imagem')).not.toBeNull();
+  });
+
+  it('embed de nota nao vira imagem: fica cru, igual ao modo leitura', () => {
+    const editor = criarComImagem('primeira\n\n![[Outra nota]]\n', async () => DATA_URL);
+    expect(document.querySelector('img.cm-lp-imagem')).toBeNull();
+    expect(editor.dom.textContent).toContain('![[Outra nota]]');
+  });
+
+  it('anexo que nao resolve sai marcado, nao some da tela', async () => {
+    criarComImagem('primeira\n\n![[sumida.png]]\n', async () => null);
+    const img = document.querySelector('img.cm-lp-imagem') as HTMLImageElement;
+    await microtarefas();
+    expect(img.classList.contains('cm-lp-imagem-faltante')).toBe(true);
+    expect(img.getAttribute('src')).toBeNull();
+  });
+
+  it('a imagem de markdown comum tambem desenha, e a remota fica texto', async () => {
+    const editor = criarComImagem(
+      'primeira\n\n![corte](foto.png)\n\n![fora](https://exemplo.org/x.png)\n',
+      async () => DATA_URL,
+    );
+    const imagens = [...document.querySelectorAll('img.cm-lp-imagem')];
+    expect(imagens).toHaveLength(1);
+    expect((imagens[0] as HTMLImageElement).alt).toBe('corte');
+    await microtarefas();
+    expect(editor.dom.textContent).toContain('https://exemplo.org/x.png');
+  });
+
+  it('imagem dentro de codigo continua texto cru', () => {
+    criarComImagem('primeira\n\n`![[foto.png]]`\n', async () => DATA_URL);
+    expect(document.querySelector('img.cm-lp-imagem')).toBeNull();
+  });
+
+  it('sem quem carregue, a imagem sai marcada em vez de sumir', () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const texto = 'primeira\n\n![[foto.png]]\n';
+    view = new EditorView({
+      state: EditorState.create({
+        doc: texto,
+        extensions: [markdown(), preservarQuebras(texto, 'lf'), livePreview()],
+      }),
+      parent: host,
+    });
+    const img = document.querySelector('img.cm-lp-imagem') as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.classList.contains('cm-lp-imagem-faltante')).toBe(true);
+  });
+});

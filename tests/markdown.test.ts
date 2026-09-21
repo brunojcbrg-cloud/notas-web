@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   acaoWikilink,
+  acharEmbeds,
   acharWikilinks,
   posicaoDaSecao,
   recortarSecao,
@@ -273,5 +274,48 @@ describe('wikilink no modo ao vivo · igualdade com o modo leitura', () => {
     expect(posicaoDaSecao(nota, 'Um')).toBe(nota.indexOf('# Um'));
     expect(posicaoDaSecao(nota, 'nao existe')).toBeNull();
     expect(posicaoDaSecao(nota, '')).toBeNull();
+  });
+});
+
+describe('varredura de embeds, a que o modo ao vivo usa', () => {
+  it('acha o embed com as pontas certas, e ignora o wikilink comum', () => {
+    const linha = 'texto ![[foto.png]] e [[Outra nota]] fim';
+    const achados = acharEmbeds(linha);
+    expect(achados).toHaveLength(1);
+    expect(linha.slice(achados[0].de, achados[0].ate)).toBe('![[foto.png]]');
+    expect(achados[0].alvo.alvo).toBe('foto.png');
+  });
+
+  it('acha o embed colado no fim da frase, que é como ele foi gravado', () => {
+    // Exatamente o caso da nota de neuroanatomia: sem espaço antes do `!`.
+    const linha = '- mais refinada a resposta final.![[Pasted image 20260921102205.png]]';
+    const achados = acharEmbeds(linha);
+    expect(achados).toHaveLength(1);
+    expect(achados[0].alvo.alvo).toBe('Pasted image 20260921102205.png');
+  });
+
+  it('separa alvo e rótulo de largura', () => {
+    const achados = acharEmbeds('![[foto.png|496]]');
+    expect(achados[0].alvo.alvo).toBe('foto.png');
+    expect(achados[0].alvo.texto).toBe('496');
+  });
+
+  it('acha mais de um na mesma linha, sem se perder', () => {
+    const linha = '![[a.png]]![[b.png]]';
+    const achados = acharEmbeds(linha);
+    expect(achados.map((achado) => achado.alvo.alvo)).toEqual(['a.png', 'b.png']);
+    expect(linha.slice(achados[1].de, achados[1].ate)).toBe('![[b.png]]');
+  });
+
+  it('a base desloca as posições para o documento inteiro', () => {
+    const achados = acharEmbeds('![[a.png]]', 40);
+    expect(achados[0].de).toBe(40);
+    expect(achados[0].ate).toBe(50);
+  });
+
+  it('recusa o que não fecha, o vazio e o que tem colchete dentro', () => {
+    expect(acharEmbeds('![[sem fim')).toHaveLength(0);
+    expect(acharEmbeds('![[ ]]')).toHaveLength(0);
+    expect(acharEmbeds('![[a[b]]')).toHaveLength(0);
   });
 });

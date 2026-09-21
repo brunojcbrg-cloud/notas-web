@@ -242,6 +242,8 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .cm-editor .cm-lp-h3 { font-size: 1.25em; }
 .cm-editor .cm-lp-h4 { font-size: 1.12em; }
 .cm-editor .cm-lp-h5, .cm-editor .cm-lp-h6 { color: var(--grafite-2); font-size: 1em; }
+.cm-editor .cm-lp-imagem { max-width: 100%; height: auto; display: block; margin: 0.6rem 0; border-radius: 4px; }
+.cm-editor .cm-lp-imagem-faltante { min-width: 12rem; min-height: 1.4rem; border: 1px dashed var(--perigo); }
 .cm-editor .cm-lp-forte { font-weight: 700; }
 .cm-editor .cm-lp-enfase { font-style: italic; }
 .cm-editor .cm-lp-codigo { padding: 1px 4px; background: var(--md-code-background); border-radius: 4px; }

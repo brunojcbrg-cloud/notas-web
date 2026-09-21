@@ -21,7 +21,13 @@ import {
   type ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
-import { acharWikilinks } from './markdown';
+import {
+  acharEmbeds,
+  acharWikilinks,
+  atributosDaImagem,
+  rotuloDoEmbed,
+} from './markdown';
+import { ehImagem } from './anexos';
 
 /**
  * O modo ao vivo tem de mostrar o mesmo que o modo leitura -- a diferença é que
@@ -33,7 +39,15 @@ export interface OpcoesLivePreview {
   resolver?: (alvo: string) => string | null;
   /** Chamado no clique. Quem navega é a tela, não a extensão. */
   aoAbrir?: (alvo: string, secao: string) => void;
+  /**
+   * Devolve a imagem pronta para exibir (data URL), ou nulo quando o anexo não
+   * resolve. Quem busca no repositório é a tela; a extensão só desenha.
+   */
+  imagem?: (alvo: string) => Promise<string | null>;
 }
+
+/** Imagem remota fica como texto, a mesma decisão do modo leitura (I.7). */
+const REMOTA = /^(?:https?:|data:)/i;
 
 const MARCAS_OCULTAVEIS = new Set(['HeaderMark', 'EmphasisMark', 'CodeMark', 'QuoteMark']);
 const MARCAS_VISIVEIS = new Set(['LinkMark']);
@@ -74,6 +88,54 @@ class BolinhaLista extends WidgetType {
     elemento.textContent = BOLINHAS[(this.nivel - 1) % BOLINHAS.length];
     elemento.setAttribute('aria-hidden', 'true');
     return elemento;
+  }
+}
+
+/**
+ * A imagem do embed, no lugar do texto `![[…]]`.
+ *
+ * O `src` chega depois, assíncrono: quem tem o token e o cache é a tela. Como o
+ * tamanho só é conhecido quando a imagem carrega, o editor é remedido no
+ * `load`, senão a linha de baixo ficaria sobreposta até o próximo toque.
+ */
+class ImagemEmbutida extends WidgetType {
+  constructor(
+    readonly alvo: string,
+    readonly rotulo: string,
+    readonly carregar?: (alvo: string) => Promise<string | null>,
+  ) {
+    super();
+  }
+
+  eq(outro: ImagemEmbutida): boolean {
+    return outro.alvo === this.alvo && outro.rotulo === this.rotulo;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const { alt, largura } = atributosDaImagem(this.alvo, this.rotulo);
+    const img = document.createElement('img');
+    img.className = 'cm-lp-imagem';
+    img.alt = alt;
+    if (largura !== null) img.style.width = `${largura}px`;
+    img.addEventListener('load', () => view.requestMeasure());
+    const carregar = this.carregar;
+    if (!carregar) {
+      img.classList.add('cm-lp-imagem-faltante');
+      return img;
+    }
+    void carregar(this.alvo).then(
+      (fonte) => {
+        if (fonte) img.src = fonte;
+        else img.classList.add('cm-lp-imagem-faltante');
+      },
+      () => img.classList.add('cm-lp-imagem-faltante'),
+    );
+    return img;
+  }
+
+  /** Sem isto o clique na imagem não chega ao editor e o cursor não se move. */
+  ignoreEvent(): boolean {
+    return false;
   }
 }
 
@@ -177,6 +239,23 @@ export function livePreview(opcoes: OpcoesLivePreview = {}): Extension {
                 return undefined;
               }
 
+              // `![alt](arquivo.png)`: o modo leitura desenha, o ao vivo também.
+              if (no.name === 'Image') {
+                if (linhaTocada) return undefined;
+                const endereco = no.node.getChild('URL');
+                if (!endereco) return undefined;
+                const origem = state.doc.sliceString(endereco.from, endereco.to).trim();
+                if (REMOTA.test(origem) || !ehImagem(origem)) return undefined;
+                const bruto = state.doc.sliceString(no.from, no.to);
+                const rotulo = /^!\[([^\]]*)\]/.exec(bruto)?.[1] ?? '';
+                const substituicao = Decoration.replace({
+                  widget: new ImagemEmbutida(origem, rotulo, opcoes.imagem),
+                }).range(no.from, no.to);
+                ranges.push(substituicao);
+                substituicoes.push(substituicao);
+                return false;
+              }
+
               if (no.name === 'HorizontalRule') {
                 ranges.push(
                   Decoration.line({ attributes: { class: 'cm-lp-separador' } }).range(linha.from),
@@ -251,6 +330,23 @@ export function livePreview(opcoes: OpcoesLivePreview = {}): Extension {
                 ranges.push(abre, fecha);
                 substituicoes.push(abre, fecha);
               }
+            }
+            // Embed de imagem. A linha que o cursor toca mostra o texto cru,
+            // como em todo o resto do ao vivo -- é lá que ele edita.
+            if (linhaTocada) continue;
+            for (const achado of acharEmbeds(linha.text, linha.from)) {
+              if (dentroDeCodigo(arvore, achado.de)) continue;
+              // Embed de nota (`![[Outra nota]]`) fica cru, igual ao modo leitura.
+              if (!ehImagem(achado.alvo.alvo)) continue;
+              const substituicao = Decoration.replace({
+                widget: new ImagemEmbutida(
+                  achado.alvo.alvo,
+                  rotuloDoEmbed(achado.alvo),
+                  opcoes.imagem,
+                ),
+              }).range(achado.de, achado.ate);
+              ranges.push(substituicao);
+              substituicoes.push(substituicao);
             }
           }
         }

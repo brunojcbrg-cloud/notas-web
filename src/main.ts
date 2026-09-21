@@ -31,15 +31,18 @@ import {
 import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, posicaoDaSecao, renderizarMarkdown, resolverWikilink, rolarParaSecao } from './markdown';
 import {
+  carregarAnexo,
   comprimirImagem,
   enviarAnexo,
   hidratarImagens,
   listarAnexos,
   nomeDeColagem,
+  resolverAnexo,
 } from './anexos';
 import { configurarLivePreview, livePreview, type OpcoesLivePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { guardarToken, lerToken, sair } from './session';
+import { guardarPreferenciasRemotas, lerPreferenciasRemotas } from './preferencias';
 import {
   aplicarTema,
   guardarPreferenciaTema,
@@ -72,14 +75,36 @@ let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
 /** A lista de anexos é buscada uma vez por sessão; as imagens têm cache próprio. */
 let anexosConhecidos: string[] | null = null;
+/**
+ * A busca em voo, compartilhada: uma nota com dez imagens no modo ao vivo pede
+ * a lista dez vezes ao mesmo tempo, e sem isto seriam dez chamadas iguais.
+ */
+let buscaDeAnexos: Promise<string[]> | null = null;
+async function listaDeAnexos(): Promise<string[]> {
+  if (anexosConhecidos) return anexosConhecidos;
+  if (!token) return [];
+  buscaDeAnexos ??= listarAnexos(token);
+  try {
+    anexosConhecidos = await buscaDeAnexos;
+  } finally {
+    buscaDeAnexos = null;
+  }
+  return anexosConhecidos ?? [];
+}
 async function hidratarAnexos(host: ParentNode): Promise<void> {
   if (!token || !host.querySelector('img[data-anexo]')) return;
   try {
-    if (!anexosConhecidos) anexosConhecidos = await listarAnexos(token);
-    await hidratarImagens(host, token, anexosConhecidos);
+    await hidratarImagens(host, token, await listaDeAnexos());
   } catch {
     // A imagem que não carregar já fica marcada como faltante pelo hidratarImagens.
   }
+}
+/** O anexo pronto para desenhar no modo ao vivo, ou nulo quando não resolve. */
+async function imagemDoEmbed(alvo: string): Promise<string | null> {
+  if (!token) return null;
+  const caminho = resolverAnexo(await listaDeAnexos(), alvo);
+  if (!caminho) return null;
+  return carregarAnexo(token, caminho);
 }
 let caminhos: string[] = [];
 let blobs = new Map<string, string>();
@@ -244,6 +269,51 @@ function atualizarTema(): void {
 midiaEscura.addEventListener('change', atualizarTema);
 atualizarTema();
 
+/**
+ * Os seletores são refeitos a cada troca de tela; guardá-los é o que deixa a
+ * preferência que veio do vault aparecer neles sem esperar o próximo desenho.
+ */
+let seletorTema: HTMLSelectElement | null = null;
+let seletorModo: HTMLSelectElement | null = null;
+let preferenciasSincronizadas = false;
+let avisouFalhaDeTema = false;
+
+/**
+ * O tema mora no vault, não só no navegador: `localStorage` não atravessa
+ * máquina, e era por isso que a mesma conta abria com cores diferentes na UFES
+ * e em casa. O valor local continua valendo na abertura -- ele é instantâneo e
+ * funciona sem rede --, e o do vault o substitui quando chega.
+ */
+async function sincronizarPreferenciasDoVault(): Promise<void> {
+  if (preferenciasSincronizadas || !token) return;
+  preferenciasSincronizadas = true;
+  try {
+    const remota = await lerPreferenciasRemotas(token);
+    if (!remota) return;
+    const { preferencia } = remota;
+    if (preferencia.tema === preferenciaTema.tema && preferencia.modo === preferenciaTema.modo) {
+      return;
+    }
+    preferenciaTema = preferencia;
+    guardarPreferenciaTema(localStorage, preferenciaTema);
+    if (seletorTema) seletorTema.value = preferenciaTema.tema;
+    if (seletorModo) seletorModo.value = preferenciaTema.modo;
+    atualizarTema();
+  } catch {
+    // Tema é conforto, não conteúdo: falhar em lê-lo não pode barrar a nota.
+    preferenciasSincronizadas = false;
+  }
+}
+
+/** Uma vez por sessão: a falha aparece, mas não vira alarme a cada troca. */
+function avisarFalhaDeTema(erro: unknown): void {
+  if (avisouFalhaDeTema) return;
+  avisouFalhaDeTema = true;
+  window.alert(
+    `O tema valeu neste navegador, mas não chegou ao vault: ${erroSeguro(erro)}`,
+  );
+}
+
 function seletoresTema(): HTMLElement {
   const grupo = elemento('div', 'tema-controles');
   const tema = elemento('select', 'tema-seletor') as HTMLSelectElement;
@@ -272,10 +342,16 @@ function seletoresTema(): HTMLElement {
   }
   modo.value = preferenciaTema.modo;
 
+  seletorTema = tema;
+  seletorModo = modo;
+
   const guardar = (): void => {
     preferenciaTema = { tema: tema.value as TemaMarkdown, modo: modo.value as ModoCor };
     guardarPreferenciaTema(localStorage, preferenciaTema);
     atualizarTema();
+    if (!token) return;
+    const escolhido = preferenciaTema;
+    void guardarPreferenciasRemotas(token, escolhido).catch(avisarFalhaDeTema);
   };
   tema.addEventListener('change', guardar);
   modo.addEventListener('change', guardar);
@@ -289,6 +365,9 @@ function encerrarSessao(): void {
   pararBloqueio = null;
   sair(sessionStorage);
   token = null;
+  anexosConhecidos = null;
+  buscaDeAnexos = null;
+  preferenciasSincronizadas = false;
   caminhos = [];
   blobs = new Map();
   treeSha = '';
@@ -503,6 +582,7 @@ function mostrarEntrada(mensagem = ''): void {
       input.value = '';
       iniciarBloqueio();
       mostrarLista();
+      void sincronizarPreferenciasDoVault();
       if (rascunhoMemoria) oferecerRascunho();
     } catch (erro) {
       status.textContent = erroSeguro(erro);
@@ -1278,6 +1358,7 @@ function mostrarNota(
   function opcoesDoAoVivo(): OpcoesLivePreview {
     return {
       resolver: (alvo) => resolverWikilink(caminhos, nota?.caminho ?? '', alvo),
+      imagem: (alvo) => imagemDoEmbed(alvo),
       aoAbrir: (alvo, secao) => {
         const atual = nota?.caminho ?? '';
         const destino = alvo ? resolverWikilink(caminhos, atual, alvo) : atual;
@@ -1473,6 +1554,7 @@ if (token) {
       lateral?.atualizarArvore(arvore);
       lateralMateriais?.atualizarArvore(arvoreMateriais);
       mostrarLista();
+      void sincronizarPreferenciasDoVault();
     })
     .catch((erro) => {
       encerrarSessao();

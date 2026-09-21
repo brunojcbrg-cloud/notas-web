@@ -124,6 +124,73 @@ export function acharWikilinks(texto: string, base = 0): WikilinkNoTexto[] {
   return achados;
 }
 
+/** Um embed de imagem (`![[…]]`) achado no texto, com as pontas do recorte. */
+export interface EmbedNoTexto {
+  /** Posição do `!`. */
+  de: number;
+  /** Posição logo depois do último `]`. */
+  ate: number;
+  alvo: AlvoWikilink;
+}
+
+/**
+ * Acha os embeds `![[…]]` de um trecho.
+ *
+ * Mesmas guardas de `regraWikilink`, pelo mesmo motivo de `acharWikilinks`: os
+ * dois modos têm de concordar sobre o que é embed, senão a mesma nota aparece
+ * diferente conforme o botão que está apertado. Quem decide se o alvo vira
+ * imagem ou fica cru é o chamador, com `ehImagem`.
+ */
+export function acharEmbeds(texto: string, base = 0): EmbedNoTexto[] {
+  const achados: EmbedNoTexto[] = [];
+  let i = 0;
+  while (i < texto.length - 2) {
+    if (
+      texto.charCodeAt(i) !== 0x21 ||
+      texto.charCodeAt(i + 1) !== 0x5b ||
+      texto.charCodeAt(i + 2) !== 0x5b
+    ) {
+      i += 1;
+      continue;
+    }
+    const fim = texto.indexOf(']]', i + 3);
+    if (fim < 0) break;
+    const bruto = texto.slice(i + 3, fim);
+    if (!bruto.trim() || bruto.includes('\n') || bruto.includes('[')) {
+      i += 1;
+      continue;
+    }
+    const alvo = analisarAlvo(bruto, true);
+    if (!alvo.alvo) {
+      i += 1;
+      continue;
+    }
+    achados.push({ de: base + i, ate: base + fim + 2, alvo });
+    i = fim + 2;
+  }
+  return achados;
+}
+
+/**
+ * O rótulo do embed é largura (`|496`) ou texto alternativo, nunca os dois.
+ *
+ * Mora aqui porque o modo leitura monta `<img>` e o modo ao vivo monta um
+ * widget do CodeMirror: se cada um decidisse sozinho, a mesma nota abriria com
+ * tamanhos diferentes conforme o botão apertado.
+ */
+export function atributosDaImagem(
+  alvo: string,
+  rotulo: string,
+): { alt: string; largura: number | null } {
+  const largura = larguraDoRotulo(rotulo);
+  return { alt: rotulo && largura === null ? rotulo : nomeDoArquivo(alvo), largura };
+}
+
+/** O rótulo que o embed carrega: vazio quando ele só repete o alvo. */
+export function rotuloDoEmbed(alvo: AlvoWikilink): string {
+  return alvo.texto === alvo.alvo ? '' : alvo.texto;
+}
+
 function escapar(texto: string): string {
   return texto
     .replace(/&/g, '&amp;')
@@ -221,8 +288,7 @@ function regraTarefas(state: StateCore): void {
  * que nenhuma data URL precise atravessar o DOMPurify.
  */
 function marcacaoDeImagem(alvo: string, rotulo: string): string {
-  const largura = larguraDoRotulo(rotulo);
-  const alt = rotulo && largura === null ? rotulo : nomeDoArquivo(alvo);
+  const { alt, largura } = atributosDaImagem(alvo, rotulo);
   const atributoLargura = largura === null ? '' : ` width="${largura}"`;
   return `<img class="nota-imagem" data-anexo="${escapar(alvo)}" alt="${escapar(
     alt,
@@ -240,7 +306,7 @@ function criarMarkdown(ctx: ContextoMarkdown): MarkdownIt {
     const alvo = tokens[indice].meta as AlvoWikilink;
     if (alvo.embed) {
       if (ehImagem(alvo.alvo)) {
-        return marcacaoDeImagem(alvo.alvo, alvo.texto === alvo.alvo ? '' : alvo.texto);
+        return marcacaoDeImagem(alvo.alvo, rotuloDoEmbed(alvo));
       }
       return escapar(`![[${alvo.bruto}]]`);
     }
