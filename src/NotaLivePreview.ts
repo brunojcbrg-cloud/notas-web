@@ -146,7 +146,7 @@ const CLASSES: Record<string, string> = {
 };
 
 /** Dentro de código o texto é literal: ali `[[x]]` não é wikilink. */
-function dentroDeCodigo(arvore: ReturnType<typeof syntaxTree>, posicao: number): boolean {
+export function dentroDeCodigo(arvore: ReturnType<typeof syntaxTree>, posicao: number): boolean {
   let no: SyntaxNode | null = arvore.resolveInner(posicao, 1);
   while (no) {
     if (no.name.includes('Code')) return true;

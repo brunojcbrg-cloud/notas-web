@@ -41,6 +41,7 @@ import {
 } from './anexos';
 import { configurarLivePreview, livePreview, type OpcoesLivePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
+import { sugestaoDeWikilinks } from './WikilinkAutocomplete';
 import { guardarToken, lerToken, sair } from './session';
 import { guardarPreferenciasRemotas, lerPreferenciasRemotas } from './preferencias';
 import {
@@ -1273,6 +1274,7 @@ function mostrarNota(
     compartimentoNumeros.of(modoInicial === 'preview' ? [] : lineNumbers()),
     history(),
     markdown(),
+    sugestaoDeWikilinks({ caminhos, caminhoAtual: nota.caminho }),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     preservarQuebras(nota.texto, nota.eol),
     compartimentoTema.of(realceMarkdown(paletaEfetiva(preferenciaTema, sistemaEscuro()))),
