@@ -236,6 +236,12 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .nota-caixa { pointer-events: none; accent-color: var(--md-link); }
 .cm-editor { color: var(--grafite); background: var(--folha); font-family: Consolas, "Courier New", monospace; font-size: 14px; line-height: 1.65; }
 .cm-editor.cm-focused { outline: 0; }
+.cm-tooltip-autocomplete { z-index: 30; overflow: hidden; color: var(--grafite); background: var(--folha); border: 1px solid var(--linha-forte); border-radius: 8px; box-shadow: 0 10px 28px var(--sombra-painel); }
+.cm-tooltip-autocomplete > ul { max-width: min(520px, calc(100vw - 24px)); max-height: min(320px, 45vh); font-family: Consolas, "Courier New", monospace; }
+.cm-tooltip-autocomplete > ul > li { min-height: 36px; display: flex; align-items: center; gap: 12px; padding: 7px 10px; }
+.cm-tooltip-autocomplete > ul > li[aria-selected] { color: var(--grafite); background: color-mix(in srgb, var(--folha) 78%, var(--tinta) 22%); }
+.cm-tooltip-autocomplete .cm-completionLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cm-tooltip-autocomplete .cm-completionDetail { margin-left: auto; color: var(--grafite-3); font-size: 11px; white-space: nowrap; }
 .cm-editor .cm-line.cm-lp-titulo { font-family: Georgia, serif; font-weight: 700; line-height: 1.25; }
 .cm-editor .cm-lp-h1 { font-size: 1.7em; }
 .cm-editor .cm-lp-h2 { font-size: 1.45em; }
@@ -297,6 +303,10 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
   .leitura-markdown { padding: 28px 20px 100px; }
   .dialogo-acoes { align-items: stretch; flex-direction: column-reverse; }
   .dialogo-acoes .botao { width: 100%; }
+}
+
+@media (pointer: coarse) {
+  .cm-tooltip-autocomplete > ul > li { min-height: 44px; padding-block: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

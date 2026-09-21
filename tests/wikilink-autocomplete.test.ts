@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
-import { CompletionContext } from '@codemirror/autocomplete';
+import { CompletionContext, completionKeymap } from '@codemirror/autocomplete';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorState } from '@codemirror/state';
 import { describe, expect, it, vi } from 'vitest';
@@ -97,5 +99,18 @@ describe('gatilho de sugestão de wikilink', () => {
       'Substância cinzenta',
     );
     expect(carregar).toHaveBeenCalledTimes(1);
+  });
+
+  it('mantém setas, Enter e Esc do CodeMirror sem capturar Tab', () => {
+    const teclas = completionKeymap.map(({ key }) => key);
+    expect(teclas).toEqual(expect.arrayContaining(['ArrowDown', 'ArrowUp', 'Enter', 'Escape']));
+    expect(teclas).not.toContain('Tab');
+  });
+
+  it('dá alvo de toque ao item sem backdrop-filter sobre o editor', () => {
+    const css = readFileSync(join(process.cwd(), 'src', 'style.css'), 'utf8');
+    expect(css).toMatch(/@media \(pointer: coarse\)[\s\S]*\.cm-tooltip-autocomplete[^}]*min-height:\s*44px/);
+    const regrasPopup = css.match(/\.cm-tooltip-autocomplete[^}]*\}/g)?.join('\n') ?? '';
+    expect(regrasPopup).not.toContain('backdrop-filter');
   });
 });

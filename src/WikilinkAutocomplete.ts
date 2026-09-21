@@ -1,11 +1,13 @@
 import {
   autocompletion,
+  completionKeymap,
   startCompletion,
   type CompletionContext,
   type CompletionSource,
 } from '@codemirror/autocomplete';
 import { syntaxTree } from '@codemirror/language';
-import type { EditorState, Extension } from '@codemirror/state';
+import { Prec, type EditorState, type Extension } from '@codemirror/state';
+import { keymap } from '@codemirror/view';
 import { dentroDeCodigo } from './NotaLivePreview';
 import { sugerirCabecalhos, sugerirNotas } from './sugestoes';
 import { resolverWikilink } from './markdown';
@@ -146,5 +148,8 @@ export function fonteDeWikilinks(opcoes: OpcoesWikilinkAutocomplete): Completion
 }
 
 export function sugestaoDeWikilinks(opcoes: OpcoesWikilinkAutocomplete): Extension {
-  return autocompletion({ override: [fonteDeWikilinks(opcoes)] });
+  return [
+    autocompletion({ override: [fonteDeWikilinks(opcoes)], defaultKeymap: false }),
+    Prec.highest(keymap.of(completionKeymap)),
+  ];
 }
