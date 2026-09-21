@@ -1,9 +1,15 @@
 import { nomeDaNota, pastaDaNota } from './tree';
+import { listarCabecalhos } from './markdown';
 
 export interface SugestaoDeNota {
   nome: string;
   caminho: string;
   pasta: string;
+}
+
+export interface SugestaoDeCabecalho {
+  titulo: string;
+  nivel: number;
 }
 
 const comparar = new Intl.Collator('pt-BR', { sensitivity: 'base' }).compare;
@@ -50,4 +56,15 @@ export function sugerirNotas(
       if (porPastaAtual) return porPastaAtual;
       return comparar(a.nome, b.nome) || comparar(a.caminho, b.caminho);
     });
+}
+
+/** Extrai e ordena os cabeçalhos sem tocar a rede. */
+export function sugerirCabecalhos(texto: string, digitado: string): SugestaoDeCabecalho[] {
+  const busca = normalizar(digitado.trim());
+  return listarCabecalhos(texto)
+    .map(({ titulo, nivel }) => ({ titulo, nivel }))
+    .sort(
+      (a, b) =>
+        faixa(a.titulo, busca) - faixa(b.titulo, busca) || comparar(a.titulo, b.titulo),
+    );
 }

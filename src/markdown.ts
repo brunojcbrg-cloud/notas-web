@@ -18,6 +18,15 @@ export interface ContextoMarkdown {
   caminhoAtual?: string;
 }
 
+export interface CabecalhoMarkdown {
+  titulo: string;
+  nivel: number;
+  /** Posição do primeiro `#` no documento. */
+  posicao: number;
+  /** Índice zero-based da linha, usado para recortar sem uma nova varredura. */
+  linha: number;
+}
+
 export type AcaoWikilink =
   | { tipo: 'navegar'; caminho: string; secao: string }
   | { tipo: 'faltante' };
@@ -48,17 +57,38 @@ export function larguraDoRotulo(rotulo: string): number | null {
  * O modo leitura rola pelo DOM (`rolarParaSecao`); o modo ao vivo é um editor de
  * texto e precisa da posição no documento.
  */
-export function posicaoDaSecao(texto: string, secao: string): number | null {
-  const alvo = secao.replace(/^\^/, '').trim().toLowerCase();
-  if (!alvo) return null;
-  const linhas = texto.split(/\r\n|\r|\n/);
+export function listarCabecalhos(texto: string): CabecalhoMarkdown[] {
+  const cabecalhos: CabecalhoMarkdown[] = [];
   let posicao = 0;
-  for (const linha of linhas) {
-    const m = /^(#{1,6})\s+(.*)$/.exec(linha);
-    if (m && m[2].trim().toLowerCase() === alvo) return posicao;
-    posicao += linha.length + 1;
+  let numeroDaLinha = 0;
+  while (posicao <= texto.length) {
+    let fim = posicao;
+    while (fim < texto.length && texto[fim] !== '\r' && texto[fim] !== '\n') fim += 1;
+    const linha = texto.slice(posicao, fim);
+    const achado = /^(#{1,6})\s+(.*)$/.exec(linha);
+    if (achado) {
+      cabecalhos.push({
+        titulo: achado[2].trim(),
+        nivel: achado[1].length,
+        posicao,
+        linha: numeroDaLinha,
+      });
+    }
+    if (fim === texto.length) break;
+    posicao = fim + (texto[fim] === '\r' && texto[fim + 1] === '\n' ? 2 : 1);
+    numeroDaLinha += 1;
   }
-  return null;
+  return cabecalhos;
+}
+
+export function posicaoDaSecao(texto: string, secao: string): number | null {
+  const alvo = secao.replace(/^\^/, '').trim().toLocaleLowerCase('pt-BR');
+  if (!alvo) return null;
+  return (
+    listarCabecalhos(texto).find(
+      ({ titulo }) => titulo.toLocaleLowerCase('pt-BR') === alvo,
+    )?.posicao ?? null
+  );
 }
 
 export interface WikilinkNoTexto {
@@ -223,21 +253,16 @@ export function recortarSecao(texto: string, secao: string): string {
   if (!secao) return texto;
   const linhas = texto.split(/\r\n|\r|\n/);
   const alvo = secao.replace(/^\^/, '').trim().toLowerCase();
-  let inicio = -1;
-  let nivel = 0;
-  for (let i = 0; i < linhas.length; i += 1) {
-    const m = /^(#{1,6})\s+(.*)$/.exec(linhas[i]);
-    if (!m) continue;
-    if (inicio < 0) {
-      if (m[2].trim().toLowerCase() === alvo) {
-        inicio = i;
-        nivel = m[1].length;
-      }
-      continue;
-    }
-    if (m[1].length <= nivel) return linhas.slice(inicio, i).join('\n');
-  }
-  return inicio < 0 ? '' : linhas.slice(inicio).join('\n');
+  const cabecalhos = listarCabecalhos(texto);
+  const indice = cabecalhos.findIndex(
+    ({ titulo }) => titulo.toLocaleLowerCase('pt-BR') === alvo,
+  );
+  if (indice < 0) return '';
+  const inicio = cabecalhos[indice];
+  const seguinte = cabecalhos
+    .slice(indice + 1)
+    .find(({ nivel }) => nivel <= inicio.nivel);
+  return linhas.slice(inicio.linha, seguinte?.linha).join('\n');
 }
 
 function regraWikilink(state: StateInline, silent: boolean): boolean {

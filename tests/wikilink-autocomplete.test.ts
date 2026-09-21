@@ -51,4 +51,16 @@ describe('gatilho de sugestão de wikilink', () => {
     const state = estado('[[Nota|apelido');
     expect(gatilhoWikilink(state, state.doc.length)).toBeNull();
   });
+
+  it('em [[# oferece cabeçalhos do próprio documento e fecha a seção aceita', async () => {
+    const state = estado('# Anatomia\n## Substância cinzenta\n\nVeja [[#subst');
+    const fonte = fonteDeWikilinks({ caminhos: [], caminhoAtual: '06_Conhecimento/Atual.md' });
+    const resultado = await fonte(new CompletionContext(state, state.doc.length, false));
+    expect(resultado && 'options' in resultado ? resultado.options[0] : null).toMatchObject({
+      label: 'Substância cinzenta',
+      detail: 'H2',
+      apply: 'Substância cinzenta]]',
+    });
+    expect(resultado?.from).toBe(state.doc.toString().lastIndexOf('#subst') + 1);
+  });
 });

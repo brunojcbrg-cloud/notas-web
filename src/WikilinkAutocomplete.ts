@@ -6,7 +6,7 @@ import {
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState, Extension } from '@codemirror/state';
 import { dentroDeCodigo } from './NotaLivePreview';
-import { sugerirNotas } from './sugestoes';
+import { sugerirCabecalhos, sugerirNotas } from './sugestoes';
 
 export interface OpcoesWikilinkAutocomplete {
   caminhos: readonly string[];
@@ -46,7 +46,23 @@ export function gatilhoWikilink(state: EditorState, posicao: number): GatilhoWik
 export function fonteDeWikilinks(opcoes: OpcoesWikilinkAutocomplete): CompletionSource {
   return (contexto: CompletionContext) => {
     const gatilho = gatilhoWikilink(contexto.state, contexto.pos);
-    if (!gatilho || gatilho.digitado.includes('#')) return null;
+    if (!gatilho) return null;
+    if (gatilho.digitado.startsWith('#')) {
+      const digitado = gatilho.digitado.slice(1);
+      return {
+        from: gatilho.from + 1,
+        filter: false,
+        options: sugerirCabecalhos(contexto.state.doc.toString(), digitado).map(
+          ({ titulo, nivel }) => ({
+            label: titulo,
+            detail: `H${nivel}`,
+            type: 'property',
+            apply: `${titulo}]]`,
+          }),
+        ),
+      };
+    }
+    if (gatilho.digitado.includes('#')) return null;
     return {
       from: gatilho.from,
       filter: false,

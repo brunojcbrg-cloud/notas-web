@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sugerirNotas } from '../src/sugestoes';
+import { sugerirCabecalhos, sugerirNotas } from '../src/sugestoes';
 
 const caminhos = [
   '06_Conhecimento/Neuro/Medula Espinal.md',
@@ -54,5 +54,15 @@ describe('sugestões de nota', () => {
   it('não usa fuzzy de letras soltas', () => {
     const nomes = sugerirNotas(caminhos, '', 'mdu').map(({ nome }) => nome);
     expect(nomes[0]).not.toBe('Medula Espinal');
+  });
+});
+
+describe('sugestões de cabeçalho', () => {
+  it('extrai níveis do documento e prioriza começo sem chamada externa', () => {
+    expect(sugerirCabecalhos('# Anatomia\n## Substância cinzenta\n### Neuroanatomia', 'neuro')).toEqual([
+      { titulo: 'Neuroanatomia', nivel: 3 },
+      { titulo: 'Anatomia', nivel: 1 },
+      { titulo: 'Substância cinzenta', nivel: 2 },
+    ]);
   });
 });

@@ -7,6 +7,7 @@ import {
   acaoWikilink,
   acharEmbeds,
   acharWikilinks,
+  listarCabecalhos,
   posicaoDaSecao,
   recortarSecao,
   renderizarMarkdown,
@@ -133,6 +134,16 @@ describe('casos 38–42 · renderização', () => {
 });
 
 describe('casos 52–57 · seções da própria nota', () => {
+  it('extrai uma única lista de cabeçalhos com nível e posição exata em EOL misto', () => {
+    const texto = '# Um\r\ncorpo\n## Dois\r### Três';
+    expect(listarCabecalhos(texto)).toEqual([
+      { titulo: 'Um', nivel: 1, posicao: 0, linha: 0 },
+      { titulo: 'Dois', nivel: 2, posicao: 12, linha: 2 },
+      { titulo: 'Três', nivel: 3, posicao: 20, linha: 3 },
+    ]);
+    expect(posicaoDaSecao(texto, 'Três')).toBe(20);
+  });
+
   it('52. [[#Seção]] navega na nota atual, não para alvo faltante', () => {
     const raiz = corpo(renderizarMarkdown('[[#Seção]]', { caminhos, caminhoAtual: atual }));
     const link = raiz.querySelector<HTMLAnchorElement>('a.nota-link');
