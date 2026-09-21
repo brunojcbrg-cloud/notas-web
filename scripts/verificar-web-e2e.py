@@ -1,7 +1,7 @@
 # Execute com: py -3.14 scripts/verificar-web-e2e.py
 # -*- coding: utf-8 -*-
 # O Python do PATH não contém o Playwright usado por esta certificação.
-"""Casos 66–67, 83–98, 101–118 e 145–152 no Edge real.
+"""Casos 66–67, 83–98, 101–118, 145–167 no Edge real.
 
 Por padrão serve o build docs/ local para certificar antes do push. Use --url
 para conferir uma publicação específica depois do push.
@@ -43,6 +43,7 @@ def main() -> int:
     from certificar_handoff_07 import certificar as certificar_07
     from certificar_handoff_08 import certificar as certificar_08
     from certificar_imagem_e_tema import certificar as certificar_imagem
+    from certificar_sugestao_wikilink import certificar as certificar_wikilink
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", help=f"endereço externo (padrão: docs/ local; publicado: {PUBLICADA})")
@@ -122,9 +123,10 @@ def main() -> int:
             caso_07 = certificar_07(navegador, url) if caso_06 else False
             caso_08 = certificar_08(navegador, url) if caso_07 else False
             caso_imagem = certificar_imagem(navegador, url) if caso_08 else False
+            caso_wikilink = certificar_wikilink(navegador, url) if caso_imagem else False
             return (
                 0
-                if caso_66 and caso_67 and caso_05 and caso_06 and caso_07 and caso_08 and caso_imagem
+                if caso_66 and caso_67 and caso_05 and caso_06 and caso_07 and caso_08 and caso_imagem and caso_wikilink
                 else 1
             )
         finally:
