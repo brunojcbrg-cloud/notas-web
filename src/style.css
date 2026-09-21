@@ -227,6 +227,8 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .leitura-markdown th { background: var(--folha-baixa); }
 .nota-link { text-decoration: none; }
 .nota-link-faltante { color: var(--perigo) !important; }
+.nota-imagem { max-width: 100%; height: auto; display: block; margin: 0.6rem 0; border-radius: 4px; }
+.nota-imagem-faltante { min-height: 1.2rem; padding: 0.3rem 0.5rem; border: 1px dashed var(--perigo); color: var(--perigo); font-size: 0.85rem; }
 .nota-caixa { pointer-events: none; accent-color: var(--md-link); }
 .cm-editor { color: var(--grafite); background: var(--folha); font-family: Consolas, "Courier New", monospace; font-size: 14px; line-height: 1.65; }
 .cm-editor.cm-focused { outline: 0; }

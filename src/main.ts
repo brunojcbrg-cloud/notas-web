@@ -30,6 +30,7 @@ import {
 } from './materiais';
 import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, renderizarMarkdown, rolarParaSecao } from './markdown';
+import { hidratarImagens, listarAnexos } from './anexos';
 import { configurarLivePreview, livePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { guardarToken, lerToken, sair } from './session';
@@ -63,6 +64,17 @@ const compartimentoPreview = new Compartment();
 const compartimentoNumeros = new Compartment();
 let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
+/** A lista de anexos é buscada uma vez por sessão; as imagens têm cache próprio. */
+let anexosConhecidos: string[] | null = null;
+async function hidratarAnexos(host: ParentNode): Promise<void> {
+  if (!token || !host.querySelector('img[data-anexo]')) return;
+  try {
+    if (!anexosConhecidos) anexosConhecidos = await listarAnexos(token);
+    await hidratarImagens(host, token, anexosConhecidos);
+  } catch {
+    // A imagem que não carregar já fica marcada como faltante pelo hidratarImagens.
+  }
+}
 let caminhos: string[] = [];
 let blobs = new Map<string, string>();
 let pastasPendentes = new Set<string>();
@@ -1219,6 +1231,7 @@ function mostrarNota(
     try {
       const texto = textoExato(editor.state);
       leituraHost.innerHTML = renderizarMarkdown(texto, { caminhos, caminhoAtual: nota.caminho });
+      void hidratarAnexos(leituraHost);
       editorHost.hidden = true;
       leituraHost.hidden = false;
       marcarModo(leitura);

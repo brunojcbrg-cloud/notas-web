@@ -73,13 +73,22 @@ describe('casos 27–34 · wikilinks', () => {
     expect(raiz.querySelector('code')?.textContent).toBe('[[Nota]]\n');
   });
 
-  it('34. embed permanece texto cru e não é interpretado', () => {
+  it('34. embed de nota permanece texto cru e não é interpretado', () => {
     const raiz = corpo(renderizarMarkdown('![[Nota]]', { caminhos, caminhoAtual: atual }));
     expect(raiz.querySelector('a, img')).toBeNull();
     expect(raiz.textContent?.trim()).toBe('![[Nota]]');
-    const imagem = corpo(renderizarMarkdown('![anexo](imagens/figura.png)'));
-    expect(imagem.querySelector('img')).toBeNull();
-    expect(imagem.textContent?.trim()).toBe('![anexo](imagens/figura.png)');
+  });
+
+  // Mudou na Fase I: embed de IMAGEM passou a renderizar. O caso 34 valia para
+  // embed de nota, que continua texto cru; imagem tem contrato próprio, em
+  // tests/anexos.test.ts. Imagem remota continua fora, por decisão do Bruno.
+  it('34b. embed de imagem local renderiza; remota continua texto', () => {
+    const local = corpo(renderizarMarkdown('![anexo](imagens/figura.png)'));
+    expect(local.querySelector('img')?.dataset.anexo).toBe('imagens/figura.png');
+    expect(local.querySelector('img')?.getAttribute('src')).toBeNull();
+    const remota = corpo(renderizarMarkdown('![anexo](https://exemplo.com/figura.png)'));
+    expect(remota.querySelector('img')).toBeNull();
+    expect(remota.textContent?.trim()).toBe('![anexo](https://exemplo.com/figura.png)');
   });
 });
 

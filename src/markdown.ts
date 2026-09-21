@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { ehImagem, nomeDoArquivo } from './anexos';
 import MarkdownIt from 'markdown-it';
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs';
 import type StateInline from 'markdown-it/lib/rules_inline/state_inline.mjs';
@@ -29,6 +30,16 @@ export function analisarAlvo(bruto: string, embed: boolean): AlvoWikilink {
   const secao = corte < 0 ? '' : alvoComSecao.slice(corte + 1).trim();
   const texto = apelido.join('|').trim() || alvoComSecao;
   return { bruto, alvo, secao, texto, embed };
+}
+
+/** `496` ou `800x600`, as duas formas que o Obsidian grava ao arrastar a alça. */
+export function larguraDoRotulo(rotulo: string): number | null {
+  const bruto = rotulo.trim();
+  if (!bruto) return null;
+  const casou = /^(\d{1,5})(?:x\d{1,5})?$/.exec(bruto);
+  if (!casou) return null;
+  const largura = Number(casou[1]);
+  return Number.isFinite(largura) && largura > 0 ? largura : null;
 }
 
 function escapar(texto: string): string {
@@ -123,6 +134,19 @@ function regraTarefas(state: StateCore): void {
   }
 }
 
+/**
+ * Sai sem `src`: quem preenche é `hidratarImagens`, depois da sanitização, para
+ * que nenhuma data URL precise atravessar o DOMPurify.
+ */
+function marcacaoDeImagem(alvo: string, rotulo: string): string {
+  const largura = larguraDoRotulo(rotulo);
+  const alt = rotulo && largura === null ? rotulo : nomeDoArquivo(alvo);
+  const atributoLargura = largura === null ? '' : ` width="${largura}"`;
+  return `<img class="nota-imagem" data-anexo="${escapar(alvo)}" alt="${escapar(
+    alt,
+  )}"${atributoLargura}>`;
+}
+
 function criarMarkdown(ctx: ContextoMarkdown): MarkdownIt {
   const md = new MarkdownIt({ html: true, linkify: false, breaks: true });
   md.inline.ruler.before('link', 'wikilink', regraWikilink);
@@ -132,7 +156,12 @@ function criarMarkdown(ctx: ContextoMarkdown): MarkdownIt {
   });
   md.renderer.rules.wikilink = (tokens, indice) => {
     const alvo = tokens[indice].meta as AlvoWikilink;
-    if (alvo.embed) return escapar(`![[${alvo.bruto}]]`);
+    if (alvo.embed) {
+      if (ehImagem(alvo.alvo)) {
+        return marcacaoDeImagem(alvo.alvo, alvo.texto === alvo.alvo ? '' : alvo.texto);
+      }
+      return escapar(`![[${alvo.bruto}]]`);
+    }
     const destino = alvo.alvo
       ? resolverWikilink(ctx.caminhos ?? [], ctx.caminhoAtual ?? '', alvo.alvo)
       : alvo.secao
@@ -149,6 +178,10 @@ function criarMarkdown(ctx: ContextoMarkdown): MarkdownIt {
     const origem = token.attrGet('src') ?? '';
     const titulo = token.attrGet('title');
     const sufixoTitulo = titulo ? ` "${titulo}"` : '';
+    // Imagem remota fica como texto de propósito: renderizá-la entregaria o IP
+    // do leitor ao servidor de terceiro a cada abertura da nota.
+    const remota = /^(?:https?:|data:)/i.test(origem);
+    if (!remota && ehImagem(origem)) return marcacaoDeImagem(origem, token.content);
     return escapar(`![${token.content}](${origem}${sufixoTitulo})`);
   };
   return md;
