@@ -144,6 +144,24 @@ export async function lerNota(
   return { caminho, sha: dados.sha, ...decodificarBase64(dados.content) };
 }
 
+/** Lê uma versão imutável da nota; o chamador pode cacheá-la pelo próprio SHA. */
+export async function lerBlob(
+  token: string,
+  sha: string,
+  fetcher: Fetcher = fetch,
+): Promise<NotaDecodificada> {
+  if (!sha) throw new Error('SHA obrigatório para ler uma versão de nota.');
+  const resposta = await fetcher(`${API}/repos/${REPO}/git/blobs/${encodeURIComponent(sha)}`, {
+    headers: cabecalhos(token),
+  });
+  await verificarResposta(resposta);
+  const dados = (await resposta.json()) as { content?: string };
+  if (typeof dados.content !== 'string') {
+    throw new ErroGitHub(502, 'Resposta inesperada da API do GitHub.');
+  }
+  return decodificarBase64(dados.content);
+}
+
 async function putNota(
   token: string,
   caminho: string,

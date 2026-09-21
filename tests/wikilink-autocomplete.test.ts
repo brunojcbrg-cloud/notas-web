@@ -3,7 +3,7 @@
 import { CompletionContext } from '@codemirror/autocomplete';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorState } from '@codemirror/state';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fonteDeWikilinks, gatilhoWikilink } from '../src/WikilinkAutocomplete';
 
 function estado(texto: string, posicao = texto.length): EditorState {
@@ -62,5 +62,40 @@ describe('gatilho de sugestão de wikilink', () => {
       apply: 'Substância cinzenta]]',
     });
     expect(resultado?.from).toBe(state.doc.toString().lastIndexOf('#subst') + 1);
+  });
+
+  it('em [[Nome# mostra carregamento e reutiliza por SHA após uma chamada', async () => {
+    const state = estado('Veja [[Medula Espinal#subst');
+    let liberar: ((texto: string) => void) | undefined;
+    const carregar = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          liberar = resolve;
+        }),
+    );
+    const fonte = fonteDeWikilinks({
+      caminhos: ['06_Conhecimento/Neuro/Medula Espinal.md'],
+      caminhoAtual: '06_Conhecimento/Atual.md',
+      blobs: new Map([['06_Conhecimento/Neuro/Medula Espinal.md', 'sha-medula']]),
+      carregarSecoes: carregar,
+    });
+    const primeira = await fonte(new CompletionContext(state, state.doc.length, false));
+    expect(primeira && 'options' in primeira ? primeira.options[0].label : '').toBe(
+      'Carregando seções…',
+    );
+    expect(carregar).toHaveBeenCalledTimes(1);
+
+    liberar?.('# Anatomia\n## Substância cinzenta');
+    await Promise.resolve();
+    const segunda = await fonte(new CompletionContext(state, state.doc.length, false));
+    const terceira = await fonte(new CompletionContext(state, state.doc.length, false));
+    expect(segunda && 'options' in segunda ? segunda.options[0] : null).toMatchObject({
+      label: 'Substância cinzenta',
+      apply: 'Substância cinzenta]]',
+    });
+    expect(terceira && 'options' in terceira ? terceira.options[0].label : '').toBe(
+      'Substância cinzenta',
+    );
+    expect(carregar).toHaveBeenCalledTimes(1);
   });
 });

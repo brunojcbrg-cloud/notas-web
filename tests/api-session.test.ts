@@ -5,6 +5,7 @@ import {
   ConflitoGitHub,
   conflitoParaTela,
   criarNota,
+  lerBlob,
   lerNota,
   listarNotas,
   salvarNota,
@@ -95,6 +96,14 @@ describe('casos 11–17 · conflito e API', () => {
     expect(url).toContain(
       '06_Conhecimento/Semiologia%20da%20Cabe%C3%A7a%20e%20Pesco%C3%A7o.md',
     );
+  });
+
+  it('lê o blob imutável diretamente pelo SHA para permitir cache', async () => {
+    const mock = fetchMock({ content: codificarBase64('# Seção', false) });
+    await expect(lerBlob('segredo', 'sha-da-nota', mock)).resolves.toMatchObject({
+      texto: '# Seção',
+    });
+    expect(String(vi.mocked(mock).mock.calls[0]?.[0])).toContain('/git/blobs/sha-da-nota');
   });
 });
 
