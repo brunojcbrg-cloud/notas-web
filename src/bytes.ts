@@ -19,7 +19,7 @@ function base64ParaBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-function bytesParaBase64(bytes: Uint8Array): string {
+export function bytesParaBase64(bytes: Uint8Array): string {
   const tamanhoBloco = 0x8000;
   let binario = '';
   for (let i = 0; i < bytes.length; i += tamanhoBloco) {

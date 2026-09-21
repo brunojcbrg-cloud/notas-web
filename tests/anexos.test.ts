@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   carregarAnexo,
   ehImagem,
+  enviarAnexo,
+  nomeDeColagem,
+  validarNomeDeAnexo,
   hidratarImagens,
   limparCacheDeAnexos,
   listarAnexos,
@@ -181,3 +184,49 @@ describe('hidratação depois da sanitização', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+describe('colar imagem no editor da web (I.5)', () => {
+  it('o nome segue o padrão do Obsidian, para os três clientes gravarem igual', () => {
+    const nome = nomeDeColagem(new Date(2026, 8, 21, 14, 30, 5));
+    expect(nome).toBe('Pasted image 20260921143005.png');
+    expect(nomeDeColagem(new Date(2026, 0, 2, 3, 4, 5))).toBe('Pasted image 20260102030405.png');
+  });
+
+  it('nome que escapa da pasta ou não é imagem é recusado', () => {
+    expect(() => validarNomeDeAnexo('foto.png')).not.toThrow();
+    expect(() => validarNomeDeAnexo('../fora.png')).toThrow();
+    expect(() => validarNomeDeAnexo('sub/foto.png')).toThrow();
+    expect(() => validarNomeDeAnexo('foto.md')).toThrow();
+    expect(() => validarNomeDeAnexo('')).toThrow();
+    expect(() => validarNomeDeAnexo('.oculto.png')).toThrow();
+  });
+
+  it('o envio grava na pasta de anexos e devolve o caminho', async () => {
+    const chamadas: Array<{ url: string; corpo: unknown }> = [];
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      chamadas.push({ url, corpo: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ content: { sha: 'abc' } }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    const caminho = await enviarAnexo('tok', 'Pasted image 20260921143005.png', new Uint8Array([1, 2, 3]), fetcher);
+
+    expect(caminho).toBe(`${PASTA_ANEXOS}Pasted image 20260921143005.png`);
+    expect(chamadas[0].url).toContain(encodeURI(caminho));
+    expect((chamadas[0].corpo as { content: string }).content).toBe('AQID');
+  });
+
+  it('o anexo recém-enviado já entra no cache, para aparecer sem recarregar', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ content: { sha: 'abc' } }), { status: 201 })) as unknown as typeof fetch;
+    const semRede = vi.fn(async () => { throw new Error('não podia ir à rede'); }) as unknown as typeof fetch;
+    const caminho = await enviarAnexo('tok', 'Pasted image 20260921150000.png', new Uint8Array([9]), fetcher);
+    await expect(carregarAnexo('tok', caminho, semRede)).resolves.toContain('data:image/png;base64,');
+    limparCacheDeAnexos();
+  });
+
+  it('nome repetido e falha da rede viram mensagem, não silêncio', async () => {
+    const conflito = vi.fn(async () => new Response('{}', { status: 422 })) as unknown as typeof fetch;
+    await expect(enviarAnexo('tok', 'x.png', new Uint8Array([1]), conflito)).rejects.toThrow(/Já existe/);
+    const erro = vi.fn(async () => new Response('{}', { status: 403 })) as unknown as typeof fetch;
+    await expect(enviarAnexo('tok', 'x.png', new Uint8Array([1]), erro)).rejects.toThrow(/403/);
+  });
+})

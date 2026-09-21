@@ -1,3 +1,4 @@
+import { bytesParaBase64 } from './bytes';
 import { BRANCH, REPO } from './github';
 
 /** Pasta única de anexos das notas, a mesma que o Obsidian e o app usam. */
@@ -58,6 +59,100 @@ export function resolverAnexo(
   );
 }
 
+/**
+ * Nome no padrão do Obsidian, para os três clientes gravarem indistinguível:
+ * `Pasted image 20260921143005.png`.
+ */
+const cache = new Map<string, string>();
+
+const BARRA_INVERTIDA = '\\';
+
+export function nomeDeColagem(agora: Date = new Date(), extensao = 'png'): string {
+  const d = (valor: number, casas = 2) => String(valor).padStart(casas, '0');
+  const carimbo =
+    `${d(agora.getFullYear(), 4)}${d(agora.getMonth() + 1)}${d(agora.getDate())}` +
+    `${d(agora.getHours())}${d(agora.getMinutes())}${d(agora.getSeconds())}`;
+  return `Pasted image ${carimbo}.${extensao}`;
+}
+
+/** Recusa nome que escape da pasta de anexos ou que não seja imagem. */
+export function validarNomeDeAnexo(nome: string): void {
+  if (
+    !nome ||
+    nome.includes('/') ||
+    nome.includes(BARRA_INVERTIDA) ||
+    nome.includes('..') ||
+    nome.startsWith('.') ||
+    !ehImagem(nome)
+  ) {
+    throw new Error(`Nome de anexo inválido: ${nome}`);
+  }
+}
+
+/**
+ * Reduz o maior lado para [ladoMaximo] e grava PNG -- o mesmo formato que o
+ * Obsidian produz ao colar, para a nota abrir igual nos três lugares.
+ *
+ * Sem o teto, cada print de tela engorda o clone do celular para sempre.
+ */
+export async function comprimirImagem(arquivo: Blob, ladoMaximo = 1600): Promise<Blob> {
+  const bitmap = await createImageBitmap(arquivo);
+  const maior = Math.max(bitmap.width, bitmap.height);
+  const escala = maior > ladoMaximo ? ladoMaximo / maior : 1;
+  const largura = Math.max(1, Math.round(bitmap.width * escala));
+  const altura = Math.max(1, Math.round(bitmap.height * escala));
+  const tela = document.createElement('canvas');
+  tela.width = largura;
+  tela.height = altura;
+  const contexto = tela.getContext('2d');
+  if (!contexto) throw new Error('O navegador não deixou desenhar a imagem.');
+  contexto.drawImage(bitmap, 0, 0, largura, altura);
+  bitmap.close?.();
+  const png = await new Promise<Blob | null>((resolver) => tela.toBlob(resolver, 'image/png'));
+  if (!png) throw new Error('Não foi possível converter a imagem.');
+  return png;
+}
+
+/**
+ * Grava o anexo no repositório e devolve o caminho.
+ *
+ * Caminho próprio, e não o `putNota` do github.ts: aquele exige `.md` de
+ * propósito, e afrouxar a regra dele para caber imagem abriria a porta para
+ * gravar qualquer coisa em qualquer lugar.
+ */
+export async function enviarAnexo(
+  token: string,
+  nome: string,
+  bytes: Uint8Array,
+  fetcher: Fetcher = fetch,
+): Promise<string> {
+  validarNomeDeAnexo(nome);
+  const caminho = `${PASTA_ANEXOS}${nome}`;
+  const conteudo = bytesParaBase64(bytes);
+  const url = `https://api.github.com/repos/${REPO}/contents/${encodeURI(caminho)}`;
+  const resposta = await fetcher(url, {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message: `notas-web: ${caminho}`,
+      content: conteudo,
+      branch: BRANCH,
+    }),
+  });
+  if (resposta.status === 422 || resposta.status === 409) {
+    throw new Error(`Já existe um anexo chamado ${nome}.`);
+  }
+  if (!resposta.ok) {
+    throw new Error(`Não foi possível enviar ${nome} (${resposta.status}).`);
+  }
+  cache.set(caminho, `data:${tipoDaImagem(nome) ?? 'image/png'};base64,${conteudo}`);
+  return caminho;
+}
+
 interface ItemConteudo {
   path?: unknown;
   type?: unknown;
@@ -83,8 +178,6 @@ export async function listarAnexos(
     .map((item) => item.path as string)
     .filter(ehImagem);
 }
-
-const cache = new Map<string, string>();
 
 /** Devolve o anexo como data URL: o repositório é privado, não há URL crua. */
 export async function carregarAnexo(

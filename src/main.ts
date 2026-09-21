@@ -30,7 +30,13 @@ import {
 } from './materiais';
 import { analisarRenomeacao, apagar, mover, planejarExclusao, planejarMovimento, planejarRenomeacao, renomear, type OrigemMovimento } from './operacoes';
 import { acaoWikilink, posicaoDaSecao, renderizarMarkdown, resolverWikilink, rolarParaSecao } from './markdown';
-import { hidratarImagens, listarAnexos } from './anexos';
+import {
+  comprimirImagem,
+  enviarAnexo,
+  hidratarImagens,
+  listarAnexos,
+  nomeDeColagem,
+} from './anexos';
 import { configurarLivePreview, livePreview, type OpcoesLivePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { guardarToken, lerToken, sair } from './session';
@@ -1145,6 +1151,44 @@ function mostrarNota(
     estado.classList.toggle('alterado', alterado);
   };
 
+  /**
+   * Colar print direto no editor (I.5). Grava o anexo no repositório e insere
+   * `![[nome]]` no cursor -- o mesmo nome e o mesmo formato que o Obsidian usa,
+   * senão a mesma nota abre diferente em cada cliente.
+   */
+  const colarImagem = (evento: ClipboardEvent, view: EditorView): boolean => {
+    const arquivo = [...(evento.clipboardData?.items ?? [])]
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .find((item): item is File => item !== null);
+    if (!arquivo) return false;
+    if (!token) {
+      window.alert('Entre com o token antes de colar imagem.');
+      return true;
+    }
+    if (nota?.somenteLeitura) return true;
+    evento.preventDefault();
+    const posicao = view.state.selection.main;
+    void (async () => {
+      try {
+        const comprimida = await comprimirImagem(arquivo);
+        const bytes = new Uint8Array(await comprimida.arrayBuffer());
+        const nome = nomeDeColagem();
+        const caminho = await enviarAnexo(token as string, nome, bytes);
+        if (anexosConhecidos && !anexosConhecidos.includes(caminho)) {
+          anexosConhecidos = [...anexosConhecidos, caminho];
+        }
+        view.dispatch({
+          changes: { from: posicao.from, to: posicao.to, insert: `![[${nome}]]` },
+          selection: { anchor: posicao.from + nome.length + 5 },
+        });
+      } catch (erro) {
+        window.alert(erroSeguro(erro));
+      }
+    })();
+    return true;
+  };
+
   const extensoes = [
     compartimentoNumeros.of(modoInicial === 'preview' ? [] : lineNumbers()),
     history(),
@@ -1154,6 +1198,7 @@ function mostrarNota(
     compartimentoTema.of(realceMarkdown(paletaEfetiva(preferenciaTema, sistemaEscuro()))),
     compartimentoPreview.of(modoInicial === 'preview' ? livePreview(opcoesDoAoVivo()) : []),
     EditorView.lineWrapping,
+    EditorView.domEventHandlers({ paste: colarImagem }),
     EditorView.updateListener.of((atualizacao) => {
       if (atualizacao.docChanged) atualizarEstado();
     }),
