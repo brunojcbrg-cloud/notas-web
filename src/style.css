@@ -188,6 +188,9 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .item-seta { color: var(--grafite-3); font-size: 18px; }
 .vazio { margin: 0; padding: 44px 20px; color: var(--grafite-3); text-align: center; }
 .estado-central { min-height: calc(100vh - 64px); display: grid; place-content: center; justify-items: center; color: var(--grafite-3); }
+.material-html-corpo { width: min(100% - 32px, 1100px); }
+.material-html-area { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--folha); border-radius: 10px; box-shadow: 0 0 0 1px var(--linha); }
+.material-html-quadro { width: 100%; height: calc(100vh - 220px); min-height: 480px; border: 0; border-radius: 10px; background: var(--folha); }
 .spinner { width: 24px; height: 24px; margin-bottom: 12px; border: 2px solid var(--linha); border-top-color: var(--tinta); border-radius: 50%; animation: girar 700ms linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }
 

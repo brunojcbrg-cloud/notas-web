@@ -7,16 +7,21 @@ export const CHAVE_LATERAL_MATERIAIS = 'notas-web.lateral-materiais';
 export const LIMITE_DOWNLOAD_DIRETO = 100_000_000;
 const PRAZO_ATUALIZACAO_MS = 7 * 24 * 60 * 60 * 1000;
 
+export type TipoMaterial = 'pdf' | 'html';
+
 export interface Material {
   id: string;
   name: string;
   size: number;
   modifiedTime: string;
   caminho: string;
+  // Ausente no manifesto versao 1 (so PDF): normalizado pela extensao do
+  // nome em analisarManifesto, nunca lido de confianca do JSON de entrada.
+  tipo: TipoMaterial;
 }
 
 export interface ManifestoMateriais {
-  versao: 1;
+  versao: 1 | 2;
   geradoEm: string;
   arquivos: Material[];
 }
@@ -25,11 +30,19 @@ export type EstadoMateriais =
   | { tipo: 'pronto'; manifesto: ManifestoMateriais; antigo: boolean }
   | { tipo: 'ausente' | 'invalido' | 'indisponivel'; mensagem: string };
 
-function materialValido(valor: unknown): valor is Material {
+const EXTENSAO_VALIDA = /\.(pdf|html)$/i;
+
+function extensaoDoNome(nome: string): TipoMaterial | null {
+  const m = EXTENSAO_VALIDA.exec(nome);
+  if (!m) return null;
+  return m[1].toLowerCase() === 'pdf' ? 'pdf' : 'html';
+}
+
+function materialValido(valor: unknown): valor is Omit<Material, 'tipo'> {
   if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return false;
   const item = valor as Partial<Material>;
   if (typeof item.id !== 'string' || !/^[\w-]+$/.test(item.id) ||
-      typeof item.name !== 'string' || !item.name.toLowerCase().endsWith('.pdf') ||
+      typeof item.name !== 'string' || extensaoDoNome(item.name) === null ||
       typeof item.caminho !== 'string' || typeof item.modifiedTime !== 'string' ||
       typeof item.size !== 'number' || !Number.isSafeInteger(item.size) || item.size < 0) return false;
   const partes = item.caminho.split('/');
@@ -41,13 +54,17 @@ export function analisarManifesto(valor: unknown, agora = Date.now()): EstadoMat
   const invalido = (): EstadoMateriais => ({ tipo: 'invalido', mensagem: 'Manifesto de materiais inválido ou de versão desconhecida. Gere-o novamente no PC.' });
   if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return invalido();
   const dados = valor as Partial<ManifestoMateriais>;
-  if (dados.versao !== 1 || typeof dados.geradoEm !== 'string' ||
+  if ((dados.versao !== 1 && dados.versao !== 2) || typeof dados.geradoEm !== 'string' ||
       Number.isNaN(Date.parse(dados.geradoEm)) || !Array.isArray(dados.arquivos) ||
       !dados.arquivos.every(materialValido)) return invalido();
-  if (new Set(dados.arquivos.map((item) => item.caminho)).size !== dados.arquivos.length) return invalido();
+  if (new Set(dados.arquivos.map((item) => (item as Material).caminho)).size !== dados.arquivos.length) return invalido();
+  const arquivos = (dados.arquivos as Omit<Material, 'tipo'>[]).map((item) => ({
+    ...item,
+    tipo: extensaoDoNome(item.name) as TipoMaterial,
+  }));
   return {
     tipo: 'pronto',
-    manifesto: dados as ManifestoMateriais,
+    manifesto: { ...dados, arquivos } as ManifestoMateriais,
     antigo: agora - Date.parse(dados.geradoEm) > PRAZO_ATUALIZACAO_MS,
   };
 }
@@ -102,7 +119,7 @@ export function construirArvoreMateriais(arquivos: readonly Material[]): ArvoreN
       }
       atual = filha;
     }
-    const nota: NotaArvore = { tipo: 'nota', nome: arquivo.name.replace(/\.pdf$/i, ''), caminho: arquivo.caminho, pasta: partes.join('/') };
+    const nota: NotaArvore = { tipo: 'nota', nome: arquivo.name.replace(EXTENSAO_VALIDA, ''), caminho: arquivo.caminho, pasta: partes.join('/') };
     atual.notas.push(nota);
     notas.push(nota);
     profundidadeMaxima = Math.max(profundidadeMaxima, partes.length);

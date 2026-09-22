@@ -21,6 +21,7 @@ import { construirArvore } from '../src/tree';
 const data = '2026-09-19T12:00:00Z';
 const material = (caminho: string, size = 1_600_000): Material => ({
   id: `id-${caminho.length}`, name: caminho.split('/').at(-1)!, size, modifiedTime: data, caminho,
+  tipo: caminho.toLowerCase().endsWith('.html') ? 'html' : 'pdf',
 });
 const manifesto = (arquivos: Material[]) => ({ versao: 1, geradoEm: data, arquivos });
 const resposta = (dados: unknown, status = 200) => new Response(JSON.stringify(dados), { status });
@@ -57,8 +58,18 @@ describe('handoff 08 · manifesto e materiais', () => {
   it('147. JSON corrompido e versão desconhecida são recusados sem lançar', async () => {
     const corrompido = fetchFalso({ content: codificarBase64('{invalido', false) });
     expect((await lerManifestoMateriais('x', corrompido)).tipo).toBe('invalido');
-    expect(analisarManifesto({ ...manifesto([]), versao: 2 }).tipo).toBe('invalido');
+    expect(analisarManifesto({ ...manifesto([]), versao: 3 }).tipo).toBe('invalido');
     expect(analisarManifesto(manifesto([material('../fora.pdf')])).tipo).toBe('invalido');
+  });
+
+  it('153. manifesto versão 2 com HTML é aceito, e versão 1 antigo continua válido (regressão)', () => {
+    const comHtml = { ...manifesto([material('Genética/Aula/Apostila.html')]), versao: 2 as const };
+    const estado = analisarManifesto(comHtml, Date.parse(data));
+    expect(estado.tipo).toBe('pronto');
+    if (estado.tipo === 'pronto') expect(estado.manifesto.arquivos[0].tipo).toBe('html');
+    const antigoV1 = analisarManifesto(manifesto([material('Genética/Aula/Antiga.pdf')]), Date.parse(data));
+    expect(antigoV1.tipo).toBe('pronto');
+    if (antigoV1.tipo === 'pronto') expect(antigoV1.manifesto.arquivos[0].tipo).toBe('pdf');
   });
 
   it('148–151. visualizador, download direto pequeno, página Drive grande e tamanho', () => {

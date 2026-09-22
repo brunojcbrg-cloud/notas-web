@@ -44,7 +44,7 @@ def certificar(navegador, url: str) -> bool:
                 if tipo == "ausente":
                     rota.fulfill(status=404, content_type="application/json", body="{}")
                     return
-                manifesto = {"versao": 2 if tipo == "invalido" else 1,
+                manifesto = {"versao": 3 if tipo == "invalido" else 1,
                              "geradoEm": datetime.now(timezone.utc).isoformat(), "arquivos": arquivos}
                 if tipo == "corrompido":
                     conteudo = b"{erro"
@@ -78,7 +78,7 @@ def certificar(navegador, url: str) -> bool:
         verificar(145, "374 PDFs em árvore por matéria e aula",
                  pagina.locator(".lateral-nota").count() == 374
                  and pagina.locator('.lateral-pasta[data-caminho="Matéria/Aula 01"]').count() == 1
-                 and "374 PDFs" in pagina.locator(".materiais-resumo").inner_text(),
+                 and "374 materiais" in pagina.locator(".materiais-resumo").inner_text(),
                  f"{pagina.locator('.lateral-nota').count()} arquivos")
         pagina.locator(".item-pasta").first.click()
         pagina.locator(".item-pasta").first.click()
