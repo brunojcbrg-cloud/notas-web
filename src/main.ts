@@ -25,6 +25,7 @@ import {
   lerManifestoMateriais,
   tamanhoLegivel,
   urlAbrir,
+  urlApiMedia,
   urlBaixar,
   type EstadoMateriais,
   type Material,
@@ -43,7 +44,10 @@ import {
 import { configurarLivePreview, livePreview, type OpcoesLivePreview } from './NotaLivePreview';
 import { mesmoTexto, preservarQuebras, textoExato } from './NotaBytes';
 import { sugestaoDeWikilinks } from './WikilinkAutocomplete';
-import { guardarToken, lerToken, sair } from './session';
+import { guardarToken, guardarTokenGoogle, lerToken, lerTokenGoogle, sair } from './session';
+import { definirSessao, redefinirSessaoPadrao } from './sessao';
+import { ErroLoginGoogle, googleDisponivel, localizarESolicitarPasse, solicitarTokenGoogle } from './google';
+import { validarPasse } from './passe';
 import { guardarPreferenciasRemotas, lerPreferenciasRemotas } from './preferencias';
 import {
   aplicarTema,
@@ -75,6 +79,8 @@ const compartimentoPreview = new Compartment();
 const compartimentoNumeros = new Compartment();
 let preferenciaTema = lerPreferenciaTema(localStorage);
 let token = lerToken(sessionStorage);
+/** Token de acesso do Google (drive.readonly), só existe depois do login Google (§3.3/§3.5). */
+let tokenGoogle = lerTokenGoogle(sessionStorage);
 /** A lista de anexos é buscada uma vez por sessão; as imagens têm cache próprio. */
 let anexosConhecidos: string[] | null = null;
 /**
@@ -388,6 +394,8 @@ function encerrarSessao(): void {
   pararBloqueio = null;
   sair(sessionStorage);
   token = null;
+  tokenGoogle = null;
+  redefinirSessaoPadrao();
   anexosConhecidos = null;
   buscaDeAnexos = null;
   preferenciasSincronizadas = false;
@@ -550,6 +558,28 @@ function iniciarBloqueio(): void {
   pararBloqueio = conectarBloqueio(controlador, window, document);
 }
 
+/** Carrega notas e materiais e entra na tela principal — comum ao token colado e ao passe do Google. */
+async function concluirEntrada(tokenGitHub: string): Promise<void> {
+  const [lista, materiais] = await Promise.all([listarNotasComSha(tokenGitHub), lerManifestoMateriais(tokenGitHub)]);
+  caminhos = lista.caminhos;
+  blobs = lista.blobs;
+  treeSha = lista.treeSha;
+  arvore = construirArvore(caminhos, [...pastasPendentes]);
+  estadoMateriais = materiais;
+  arvoreMateriais = construirArvoreMateriais(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos : []);
+  materiaisPorCaminho = new Map(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos.map((item) => [item.caminho, item]) : []);
+  guardarToken(sessionStorage, tokenGitHub);
+  token = tokenGitHub;
+  iniciarBloqueio();
+  mostrarLista();
+  // #materiais leva direto aos materiais depois do login (atalho de tela
+  // inicial); sem o atalho, cai na última seção usada nesta máquina.
+  const secaoInicial = window.location.hash === '#materiais' ? 'materiais' : lerSecaoPreferida();
+  if (secaoInicial === 'materiais') selecionarSecao('materiais');
+  void sincronizarPreferenciasDoVault();
+  if (rascunhoMemoria) oferecerRascunho();
+}
+
 function mostrarEntrada(mensagem = ''): void {
   limpar();
   raiz.replaceChildren();
@@ -569,6 +599,30 @@ function mostrarEntrada(mensagem = ''): void {
     elemento('h1', '', 'Notas de conhecimento'),
     elemento('p', 'entrada-descricao', 'Leia e edite 06_Conhecimento sem depender de outro computador.'),
   );
+  const status = elemento('p', 'mensagem erro', mensagem);
+  status.hidden = !mensagem;
+
+  const botaoGoogle = elemento('button', 'botao botao-sutil botao-google', 'Entrar com o Google');
+  botaoGoogle.type = 'button';
+  if (!googleDisponivel()) {
+    botaoGoogle.disabled = true;
+    botaoGoogle.title = 'A biblioteca do Google ainda não carregou. Espere alguns segundos ou use o token colado.';
+    // O <script async defer> do GIS (index.html) pode terminar de carregar
+    // depois desta tela já estar desenhada — sem isto o botão ficaria
+    // desabilitado para sempre numa rede lenta, mesmo com o Google pronto.
+    document
+      .querySelector<HTMLScriptElement>('script[src="https://accounts.google.com/gsi/client"]')
+      ?.addEventListener(
+        'load',
+        () => {
+          if (!googleDisponivel()) return;
+          botaoGoogle.disabled = false;
+          botaoGoogle.title = '';
+        },
+        { once: true },
+      );
+  }
+
   const form = elemento('form', 'form-token');
   const label = elemento('label', '', 'Token do GitHub');
   label.htmlFor = 'token';
@@ -582,44 +636,57 @@ function mostrarEntrada(mensagem = ''): void {
   input.placeholder = 'github_pat_…';
   const botao = elemento('button', 'botao botao-primario', 'Entrar');
   botao.type = 'submit';
-  const status = elemento('p', 'mensagem erro', mensagem);
-  status.hidden = !mensagem;
-  form.append(label, input, botao, status);
+  form.append(label, input, botao);
+
+  botaoGoogle.addEventListener('click', async () => {
+    botaoGoogle.disabled = true;
+    botao.disabled = true;
+    botaoGoogle.textContent = 'Abrindo o Google…';
+    status.hidden = true;
+    try {
+      const acesso = await solicitarTokenGoogle();
+      guardarTokenGoogle(sessionStorage, acesso);
+      tokenGoogle = acesso;
+      botaoGoogle.textContent = 'Procurando seu acesso…';
+      const passeBruto = await localizarESolicitarPasse(acesso);
+      const passe = validarPasse(passeBruto);
+      definirSessao({ repo: passe.repo, branch: passe.branch, pasta: passe.pastaNotas });
+      botaoGoogle.textContent = 'Entrando…';
+      await concluirEntrada(passe.token);
+    } catch (erro) {
+      redefinirSessaoPadrao();
+      tokenGoogle = null;
+      status.textContent = erro instanceof ErroLoginGoogle ? erro.message : erroSeguro(erro);
+      status.hidden = false;
+      botaoGoogle.disabled = !googleDisponivel();
+      botao.disabled = false;
+      botaoGoogle.textContent = 'Entrar com o Google';
+    }
+  });
+
   form.addEventListener('submit', async (evento) => {
     evento.preventDefault();
     const valor = input.value;
     botao.disabled = true;
+    botaoGoogle.disabled = true;
     botao.textContent = 'Verificando…';
     status.hidden = true;
     try {
-      const [lista, materiais] = await Promise.all([listarNotasComSha(valor), lerManifestoMateriais(valor)]);
-      caminhos = lista.caminhos;
-      blobs = lista.blobs;
-      treeSha = lista.treeSha;
-      arvore = construirArvore(caminhos, [...pastasPendentes]);
-      estadoMateriais = materiais;
-      arvoreMateriais = construirArvoreMateriais(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos : []);
-      materiaisPorCaminho = new Map(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos.map((item) => [item.caminho, item]) : []);
-      guardarToken(sessionStorage, valor);
-      token = valor;
+      await concluirEntrada(valor);
       input.value = '';
-      iniciarBloqueio();
-      mostrarLista();
-      // #materiais leva direto aos materiais depois do login (atalho de tela
-      // inicial); sem o atalho, cai na última seção usada nesta máquina.
-      const secaoInicial = window.location.hash === '#materiais' ? 'materiais' : lerSecaoPreferida();
-      if (secaoInicial === 'materiais') selecionarSecao('materiais');
-      void sincronizarPreferenciasDoVault();
-      if (rascunhoMemoria) oferecerRascunho();
     } catch (erro) {
       status.textContent = erroSeguro(erro);
       status.hidden = false;
       botao.disabled = false;
+      botaoGoogle.disabled = !googleDisponivel();
       botao.textContent = 'Entrar';
     }
   });
   painel.append(
+    botaoGoogle,
+    elemento('p', 'entrada-ou', 'ou'),
     form,
+    status,
     elemento(
       'p',
       'aviso-compartilhado',
@@ -862,7 +929,7 @@ function mostrarMateriais(): void {
     }
     identificacao.append(texto);
     const acoes = elemento('div', 'material-acoes');
-    if (material.tipo === 'html' && !grandeParaLinkDireto(material)) {
+    if (material.tipo === 'html' && !grandeParaLinkDireto(material) && tokenGoogle) {
       const abrirAqui = elemento('button', 'botao botao-primario material-abrir-aqui', 'Abrir aqui');
       abrirAqui.type = 'button';
       abrirAqui.setAttribute('aria-label', `Abrir ${material.name} nesta página`);
@@ -909,7 +976,13 @@ async function mostrarMaterialHtml(material: Material): Promise<void> {
   conteudo?.append(corpo);
 
   try {
-    const resposta = await fetch(urlBaixar(material));
+    // §3.5: drive.google.com/uc?export=download nao manda CORS (medido em
+    // 21/09) - a API do Drive com Bearer manda, e foi o proprio caminho
+    // provado em producao no M0.3 (22/09). Sem token Google o botao "Abrir
+    // aqui" nem aparece (ver gate em mostrarMateriais), entao chegar aqui
+    // sem tokenGoogle e estado inesperado, nao caminho normal.
+    if (!tokenGoogle) throw new Error('Sem sessão do Google — entre novamente para abrir apostilas aqui.');
+    const resposta = await fetch(urlApiMedia(material), { headers: { Authorization: `Bearer ${tokenGoogle}` } });
     if (!resposta.ok) throw new Error(`Drive respondeu ${resposta.status}`);
     const html = await resposta.text();
     if (materialHtmlAtual !== material || telaAtual !== 'material-html') return;

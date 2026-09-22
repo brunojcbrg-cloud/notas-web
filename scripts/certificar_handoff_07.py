@@ -109,7 +109,7 @@ def certificar(navegador, url: str) -> bool:
         pagina.route("https://api.github.com/**", responder)
         pagina.goto(url, wait_until="networkidle")
         pagina.locator("#token").fill("token-inteiramente-falso")
-        pagina.get_by_role("button", name="Entrar").click()
+        pagina.get_by_role("button", name="Entrar", exact=True).click()
         pagina.locator(".lateral-pasta").first.wait_for(state="attached")
         return contexto, pagina, estado, erros
 

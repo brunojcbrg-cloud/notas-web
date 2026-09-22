@@ -94,7 +94,9 @@ h2 { font-family: Georgia, serif; font-size: 24px; line-height: 1.2; letter-spac
 .marca-sinal { width: 32px; height: 32px; border-radius: 5px; font-size: 12px; }
 .sobretitulo { margin-bottom: 8px; color: var(--tinta); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; }
 .entrada-descricao, .dialogo-texto { color: var(--grafite-2); line-height: 1.55; text-wrap: pretty; }
-.form-token { display: grid; gap: 10px; margin-top: 28px; }
+.form-token { display: grid; gap: 10px; margin-top: 16px; }
+.botao-google { width: 100%; margin-top: 28px; }
+.entrada-ou { margin: 14px 0 0; color: var(--grafite-3); font-size: 12px; text-align: center; text-transform: uppercase; letter-spacing: 0.08em; }
 label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .campo { width: 100%; min-height: 46px; padding: 10px 13px; color: var(--grafite); background: var(--folha-baixa); border: 1px solid var(--transparente); border-radius: 7px; }
 .campo:hover { border-color: var(--linha-forte); }

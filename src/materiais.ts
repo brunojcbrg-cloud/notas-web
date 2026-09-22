@@ -147,6 +147,14 @@ export function urlBaixar(material: Material): string {
     : `https://drive.google.com/uc?export=download&id=${encodeURIComponent(material.id)}`;
 }
 
+// Fase 3, §3.5: `drive.google.com/uc?export=download` devolve 403 sem CORS
+// em fetch (medido em 21/09 — ver adendo A.2 do handoff de integração).
+// `files/{id}?alt=media` manda CORS para XHR autenticado; exige token de
+// sessão do Google (escopo drive.readonly, decidido em M0.3).
+export function urlApiMedia(material: Material): string {
+  return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(material.id)}?alt=media`;
+}
+
 export function tamanhoLegivel(bytes: number): string {
   const unidade = bytes >= 1_000_000_000 ? 'GB' : bytes >= 1_000_000 ? 'MB' : bytes >= 1_000 ? 'KB' : 'B';
   const divisor = unidade === 'GB' ? 1_000_000_000 : unidade === 'MB' ? 1_000_000 : unidade === 'KB' ? 1_000 : 1;

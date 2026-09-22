@@ -108,7 +108,7 @@ def certificar(navegador, url: str) -> bool:
         pagina.route("https://api.github.com/**", responder)
         pagina.goto(url, wait_until="networkidle", timeout=30_000)
         pagina.locator("#token").fill("github_pat_E2E_LOCAL")
-        pagina.get_by_role("button", name="Entrar").click()
+        pagina.get_by_role("button", name="Entrar", exact=True).click()
         return contexto, pagina, erros, gravacoes
 
     def abrir_nota(pagina) -> None:

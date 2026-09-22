@@ -60,7 +60,7 @@ def certificar(navegador, url: str, screenshot: str | None = None) -> bool:
         pagina.route("https://api.github.com/**", responder)
         pagina.goto(url, wait_until="networkidle")
         pagina.locator("#token").fill("github_pat_E2E_LATERAL")
-        pagina.get_by_role("button", name="Entrar").click()
+        pagina.get_by_role("button", name="Entrar", exact=True).click()
         pagina.locator(".lateral-nota").first.wait_for(state="attached")
         return contexto, pagina, erros
 

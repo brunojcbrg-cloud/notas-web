@@ -1,6 +1,9 @@
-"""Certificação da Fase 2 do handoff de integração de três clientes (21/09):
-manifesto versão 2, abrir HTML no iframe, voltar, PDF continuar abrindo no
-Drive, e #materiais caindo na seção certa. GitHub e Drive inteiramente falsos.
+"""Certificação da Fase 2 (21/09) + Fase 3 §3.5 (22/09) do handoff de
+integração de três clientes: manifesto versão 2, abrir HTML no iframe,
+voltar, PDF continuar abrindo no Drive, #materiais caindo na seção certa,
+e o botão "Abrir aqui" ausente sem token do Google / buscando pela API do
+Drive com Bearer quando há sessão do Google. GitHub, Drive e a API do
+Google inteiramente falsos.
 """
 from __future__ import annotations
 
@@ -30,11 +33,18 @@ def certificar(navegador, url: str) -> bool:
          "tipo": "pdf"},
     ]
 
-    def abrir_contexto(versao: int = 2, hash_inicial: str = ""):
+    def abrir_contexto(versao: int = 2, hash_inicial: str = "", token_google: str | None = None):
         contexto = navegador.new_context(viewport={"width": 1280, "height": 900})
+        if token_google:
+            # Simula uma sessão do Google já concluída (§3.3): main.ts lê
+            # sessionStorage na inicialização do módulo, então a semente tem
+            # de estar lá antes do primeiro script da página rodar.
+            chave = "notas-web.google-token"
+            contexto.add_init_script(f"window.sessionStorage.setItem({json.dumps(chave)}, {json.dumps(token_google)});")
         pagina = contexto.new_page()
         erros: list[str] = []
         pedidos_drive: list[str] = []
+        pedidos_googleapis: list[dict] = []
         pagina.on("pageerror", lambda erro: erros.append(str(erro)))
 
         def github(rota) -> None:
@@ -59,16 +69,27 @@ def certificar(navegador, url: str) -> bool:
             else:
                 rota.fulfill(status=200, content_type="text/html", body="<title>Visualizador falso do Drive</title>")
 
+        def googleapis(rota) -> None:
+            pedidos_googleapis.append({
+                "url": rota.request.url,
+                "authorization": rota.request.headers.get("authorization", ""),
+            })
+            if "/files/html-1" in rota.request.url and "alt=media" in rota.request.url:
+                rota.fulfill(status=200, content_type="text/html", body=APOSTILA_HTML)
+            else:
+                rota.fulfill(status=404, content_type="application/json", body="{}")
+
         pagina.route("https://api.github.com/**", github)
         contexto.route("https://drive.google.com/**", drive)
+        contexto.route("https://www.googleapis.com/**", googleapis)
         destino = url + hash_inicial
         pagina.goto(destino, wait_until="networkidle")
         pagina.locator("#token").fill("github_pat_FALSO_MATERIAIS_HTML")
-        pagina.get_by_role("button", name="Entrar").click()
-        return contexto, pagina, erros, pedidos_drive
+        pagina.get_by_role("button", name="Entrar", exact=True).click()
+        return contexto, pagina, erros, pedidos_drive, pedidos_googleapis
 
     # #materiais leva direto a materiais depois do login.
-    contexto, pagina, erros, _ = abrir_contexto(hash_inicial="#materiais")
+    contexto, pagina, erros, _, _ = abrir_contexto(hash_inicial="#materiais")
     try:
         pagina.locator(".materiais-corpo").wait_for(state="visible", timeout=10_000)
         verificar(
@@ -78,8 +99,27 @@ def certificar(navegador, url: str) -> bool:
     finally:
         contexto.close()
 
-    # Fluxo completo: manifesto v2, abrir HTML no iframe sandbox, voltar, PDF continua no Drive.
-    contexto, pagina, erros, pedidos_drive = abrir_contexto()
+    # §3.5, regressão explícita do handoff: sem token do Google (entrada só por
+    # token do GitHub), "Abrir aqui" fica AUSENTE, nunca quebrado.
+    contexto, pagina, erros, _, _ = abrir_contexto()
+    try:
+        pagina.locator(".lista-acoes button", has_text="Materiais").click()
+        pagina.locator(".materiais-corpo").wait_for(state="visible")
+        for _ in range(3):
+            pagina.locator(".item-pasta").first.click()
+        linha_html_sem_google = pagina.locator(
+            '.item-material[data-caminho="Genética/P1/Aula 01/Aula 01 - 08 - apostila final.html"]'
+        )
+        verificar(
+            "3.5-sem-token-google", "sem sessão do Google, 'Abrir aqui' não aparece no material HTML (ausente, não quebrado)",
+            linha_html_sem_google.locator(".material-abrir-aqui").count() == 0 and not erros,
+        )
+    finally:
+        contexto.close()
+
+    # Fluxo completo, COM sessão do Google: manifesto v2, abrir HTML no iframe
+    # sandbox buscado pela API do Drive com Bearer, voltar, PDF continua no Drive.
+    contexto, pagina, erros, pedidos_drive, pedidos_googleapis = abrir_contexto(token_google="ya29.token-de-teste-fase3")
     try:
         pagina.locator(".lista-acoes button", has_text="Materiais").click()
         pagina.locator(".materiais-corpo").wait_for(state="visible")
@@ -96,6 +136,10 @@ def certificar(navegador, url: str) -> bool:
             "marca-html", "material HTML é rotulado como HTML, não PDF",
             linha_html.locator(".item-marca").inner_text() == "HTML",
         )
+        verificar(
+            "3.5-abrir-aqui-presente", "com sessão do Google, 'Abrir aqui' aparece no material HTML",
+            linha_html.locator(".material-abrir-aqui").count() == 1,
+        )
 
         linha_html.locator(".material-abrir-aqui").click()
         quadro = pagina.locator(".material-html-quadro")
@@ -110,6 +154,14 @@ def certificar(navegador, url: str) -> bool:
             sandbox == "" and conteudo_frame == "Apostila falsa",
             f"sandbox={sandbox!r} conteudo={conteudo_frame!r}",
         )
+        pedido_media = next((p for p in pedidos_googleapis if "/files/html-1" in p["url"] and "alt=media" in p["url"]), None)
+        verificar(
+            "3.5-fetch-api-drive-bearer",
+            "a apostila foi buscada em googleapis.com/drive/v3/files/{id}?alt=media com Authorization: Bearer, não drive.google.com/uc",
+            pedido_media is not None and pedido_media["authorization"] == "Bearer ya29.token-de-teste-fase3"
+            and not any("uc?export=download" in u for u in pedidos_drive),
+            f"pedido={pedido_media!r}",
+        )
 
         pagina.locator(".material-html-corpo button", has_text="Voltar").click()
         pagina.locator(".materiais-corpo").wait_for(state="visible")
@@ -117,7 +169,7 @@ def certificar(navegador, url: str) -> bool:
 
         linha_pdf = pagina.locator('.item-material[data-caminho="Genética/P1/Aula 01/Aula 01 - 08 - apostila final.pdf"]')
         verificar(
-            "pdf-sem-abrir-aqui", "material PDF não ganha botão 'Abrir aqui'",
+            "pdf-sem-abrir-aqui", "material PDF não ganha botão 'Abrir aqui' mesmo com sessão do Google",
             linha_pdf.locator(".material-abrir-aqui").count() == 0,
         )
         with contexto.expect_page() as popup_evento:
@@ -125,7 +177,7 @@ def certificar(navegador, url: str) -> bool:
         popup = popup_evento.value
         popup.wait_for_load_state()
         verificar(
-            "pdf-continua-drive", "PDF continua abrindo no Drive (não muda com a Fase 2)",
+            "pdf-continua-drive", "PDF continua abrindo no Drive (não muda com a Fase 2/3)",
             popup.url == "https://drive.google.com/file/d/pdf-1/view",
         )
         popup.close()
@@ -133,7 +185,7 @@ def certificar(navegador, url: str) -> bool:
         contexto.close()
 
     # Regressão: manifesto versão 1 antigo (só PDF, sem campo tipo) ainda carrega.
-    contexto, pagina, erros, _ = abrir_contexto(versao=1)
+    contexto, pagina, erros, _, _ = abrir_contexto(versao=1)
     try:
         pagina.locator(".lista-acoes button", has_text="Materiais").click()
         pagina.locator(".materiais-corpo").wait_for(state="visible")

@@ -67,7 +67,7 @@ def certificar(navegador, url: str) -> bool:
         contexto.route("https://drive.google.com/**", drive)
         pagina.goto(url, wait_until="networkidle")
         pagina.locator("#token").fill("github_pat_FALSO_MATERIAIS")
-        pagina.get_by_role("button", name="Entrar").click()
+        pagina.get_by_role("button", name="Entrar", exact=True).click()
         pagina.locator(".lista-corpo").wait_for(state="visible")
         pagina.locator(".lista-acoes button", has_text="Materiais").click()
         pagina.locator(".materiais-corpo").wait_for(state="visible")

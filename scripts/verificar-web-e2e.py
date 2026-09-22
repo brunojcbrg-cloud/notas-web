@@ -101,7 +101,7 @@ def main() -> int:
             )
 
             pagina.locator("#token").fill("github_pat_TOKEN_INVALIDO_E2E")
-            pagina.get_by_role("button", name="Entrar").click()
+            pagina.get_by_role("button", name="Entrar", exact=True).click()
             status = pagina.locator(".mensagem.erro")
             status.wait_for(state="visible", timeout=20_000)
             texto = status.inner_text()

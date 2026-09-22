@@ -43,7 +43,7 @@ def certificar(navegador, url: str) -> bool:
         pagina.route("https://api.github.com/**", responder)
         pagina.goto(url, wait_until="networkidle", timeout=30_000)
         pagina.locator("#token").fill("github_pat_E2E_LOCAL")
-        pagina.get_by_role("button", name="Entrar").click()
+        pagina.get_by_role("button", name="Entrar", exact=True).click()
         pagina.get_by_role("searchbox", name="Filtrar notas por nome").fill("Aula Introdução à micro")
         pagina.locator(".item-nota").first.click()
         pagina.locator(".cm-editor").wait_for(state="visible")
