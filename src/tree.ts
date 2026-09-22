@@ -1,4 +1,4 @@
-import { PASTA, validarCaminho } from './github';
+import { pastaAtual, validarCaminho } from './github';
 
 export interface NotaArvore {
   tipo: 'nota';
@@ -36,7 +36,7 @@ export function nomeDaNota(caminho: string): string {
 }
 
 export function pastaDaNota(caminho: string): string {
-  const relativo = caminho.startsWith(PASTA) ? caminho.slice(PASTA.length) : caminho;
+  const relativo = caminho.startsWith(pastaAtual()) ? caminho.slice(pastaAtual().length) : caminho;
   const partes = relativo.split('/');
   partes.pop();
   return partes.join('/');
@@ -60,8 +60,8 @@ export function construirArvore(caminhos: readonly string[], pastasPendentes: re
   let profundidadeMaxima = 0;
 
   for (const caminho of caminhos) {
-    if (!caminho.startsWith(PASTA) || !caminho.toLowerCase().endsWith('.md')) continue;
-    const partes = caminho.slice(PASTA.length).split('/');
+    if (!caminho.startsWith(pastaAtual()) || !caminho.toLowerCase().endsWith('.md')) continue;
+    const partes = caminho.slice(pastaAtual().length).split('/');
     const arquivo = partes.pop();
     if (!arquivo) continue;
     let atual = raiz;
@@ -89,7 +89,7 @@ export function construirArvore(caminhos: readonly string[], pastasPendentes: re
   }
 
   for (const pendente of pastasPendentes) {
-    validarCaminho(`${PASTA}${pendente}/__validacao__.md`);
+    validarCaminho(`${pastaAtual()}${pendente}/__validacao__.md`);
     let atual = raiz;
     const acumulado: string[] = [];
     for (const segmento of pendente.split('/')) {

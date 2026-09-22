@@ -1,5 +1,5 @@
 import { bytesParaBase64 } from './bytes';
-import { BRANCH, REPO } from './github';
+import { branchAtual, repoAtual } from './github';
 
 /** Pasta única de anexos das notas, a mesma que o Obsidian e o app usam. */
 export const PASTA_ANEXOS = '06_Conhecimento/_anexos/';
@@ -129,7 +129,7 @@ export async function enviarAnexo(
   validarNomeDeAnexo(nome);
   const caminho = `${PASTA_ANEXOS}${nome}`;
   const conteudo = bytesParaBase64(bytes);
-  const url = `https://api.github.com/repos/${REPO}/contents/${encodeURI(caminho)}`;
+  const url = `https://api.github.com/repos/${repoAtual()}/contents/${encodeURI(caminho)}`;
   const resposta = await fetcher(url, {
     method: 'PUT',
     headers: {
@@ -140,7 +140,7 @@ export async function enviarAnexo(
     body: JSON.stringify({
       message: `notas-web: ${caminho}`,
       content: conteudo,
-      branch: BRANCH,
+      branch: branchAtual(),
     }),
   });
   if (resposta.status === 422 || resposta.status === 409) {
@@ -163,9 +163,9 @@ export async function listarAnexos(
   token: string,
   fetcher: Fetcher = fetch,
 ): Promise<string[]> {
-  const url = `https://api.github.com/repos/${REPO}/contents/${encodeURI(
+  const url = `https://api.github.com/repos/${repoAtual()}/contents/${encodeURI(
     PASTA_ANEXOS.replace(/\/$/, ''),
-  )}?ref=${BRANCH}`;
+  )}?ref=${branchAtual()}`;
   const resposta = await fetcher(url, {
     headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}` },
   });
@@ -189,7 +189,7 @@ export async function carregarAnexo(
   if (guardado) return guardado;
   const tipo = tipoDaImagem(caminho);
   if (!tipo) throw new Error(`Extensão de imagem não suportada: ${caminho}`);
-  const url = `https://api.github.com/repos/${REPO}/contents/${encodeURI(caminho)}?ref=${BRANCH}`;
+  const url = `https://api.github.com/repos/${repoAtual()}/contents/${encodeURI(caminho)}?ref=${branchAtual()}`;
   const resposta = await fetcher(url, {
     headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}` },
   });

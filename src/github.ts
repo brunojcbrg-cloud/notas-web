@@ -1,8 +1,8 @@
 import { decodificarBase64, type NotaDecodificada } from './bytes';
+import { branchAtual, pastaAtual, repoAtual } from './sessao';
 
-export const REPO = 'brunojcbrg-cloud/vault-conhecimento';
-export const BRANCH = 'master';
-export const PASTA = '06_Conhecimento/';
+export { branchAtual, pastaAtual, repoAtual } from './sessao';
+
 const API = 'https://api.github.com';
 
 export interface NotaRemota extends NotaDecodificada {
@@ -48,12 +48,13 @@ export class CaminhoExistente extends Error {
 }
 
 export function validarCaminho(caminho: string): void {
+  const pasta = pastaAtual();
   if (
-    !caminho.startsWith(PASTA) ||
+    !caminho.startsWith(pasta) ||
     !caminho.endsWith('.md') ||
     caminho.includes('..') ||
     caminho.includes('\\') ||
-    caminho.slice(PASTA.length).split('/').some((parte) => !parte)
+    caminho.slice(pasta.length).split('/').some((parte) => !parte)
   ) {
     throw new Error('Caminho fora de 06_Conhecimento ou inválido.');
   }
@@ -88,7 +89,7 @@ async function verificarResposta(resposta: Response): Promise<void> {
 }
 
 export async function listarNotasComSha(token: string, fetcher: Fetcher = fetch): Promise<ListaNotas> {
-  const url = `${API}/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
+  const url = `${API}/repos/${repoAtual()}/git/trees/${branchAtual()}?recursive=1`;
   const resposta = await fetcher(url, { headers: cabecalhos(token) });
   await verificarResposta(resposta);
   const dados = (await resposta.json()) as {
@@ -104,7 +105,7 @@ export async function listarNotasComSha(token: string, fetcher: Fetcher = fetch)
       (item): item is { path: string; type?: string; sha?: string } =>
         typeof item.path === 'string' &&
         item.type === 'blob' &&
-        item.path.startsWith(PASTA) &&
+        item.path.startsWith(pastaAtual()) &&
         item.path.endsWith('.md'),
     );
   if (itens.some((item) => typeof item.sha !== 'string' || !item.sha)) {
@@ -118,14 +119,14 @@ export async function listarNotasComSha(token: string, fetcher: Fetcher = fetch)
 }
 
 export async function listarNotas(token: string, fetcher: Fetcher = fetch): Promise<string[]> {
-  const url = `${API}/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
+  const url = `${API}/repos/${repoAtual()}/git/trees/${branchAtual()}?recursive=1`;
   const resposta = await fetcher(url, { headers: cabecalhos(token) });
   await verificarResposta(resposta);
   const dados = (await resposta.json()) as { tree?: Array<{ path?: string; type?: string }> };
   return (dados.tree ?? [])
     .filter((item): item is { path: string; type?: string } =>
       typeof item.path === 'string' && item.type === 'blob' &&
-      item.path.startsWith(PASTA) && item.path.endsWith('.md'))
+      item.path.startsWith(pastaAtual()) && item.path.endsWith('.md'))
     .map((item) => item.path).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
@@ -134,7 +135,7 @@ export async function lerNota(
   caminho: string,
   fetcher: Fetcher = fetch,
 ): Promise<NotaRemota> {
-  const url = `${API}/repos/${REPO}/contents/${codificarCaminho(caminho)}?ref=${BRANCH}`;
+  const url = `${API}/repos/${repoAtual()}/contents/${codificarCaminho(caminho)}?ref=${branchAtual()}`;
   const resposta = await fetcher(url, { headers: cabecalhos(token) });
   await verificarResposta(resposta);
   const dados = (await resposta.json()) as { content?: string; sha?: string };
@@ -151,7 +152,7 @@ export async function lerBlob(
   fetcher: Fetcher = fetch,
 ): Promise<NotaDecodificada> {
   if (!sha) throw new Error('SHA obrigatório para ler uma versão de nota.');
-  const resposta = await fetcher(`${API}/repos/${REPO}/git/blobs/${encodeURIComponent(sha)}`, {
+  const resposta = await fetcher(`${API}/repos/${repoAtual()}/git/blobs/${encodeURIComponent(sha)}`, {
     headers: cabecalhos(token),
   });
   await verificarResposta(resposta);
@@ -173,11 +174,11 @@ async function putNota(
   const corpo: { message: string; content: string; branch: string; sha?: string } = {
     message: `notas-web: ${caminho}`,
     content,
-    branch: BRANCH,
+    branch: branchAtual(),
   };
   if (sha !== undefined) corpo.sha = sha;
   const resposta = await fetcher(
-    `${API}/repos/${REPO}/contents/${codificarCaminho(caminho)}`,
+    `${API}/repos/${repoAtual()}/contents/${codificarCaminho(caminho)}`,
     {
       method: 'PUT',
       headers: { ...cabecalhos(token), 'Content-Type': 'application/json' },

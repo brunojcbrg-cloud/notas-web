@@ -1,5 +1,5 @@
 import { codificarBase64, decodificarBase64 } from './bytes';
-import { BRANCH, REPO } from './github';
+import { branchAtual, repoAtual } from './github';
 import { PREFERENCIA_PADRAO, type ModoCor, type PreferenciaTema, type TemaMarkdown } from './themes';
 
 /**
@@ -41,7 +41,7 @@ export function serializarPreferencias(preferencia: PreferenciaTema): string {
 }
 
 function url(): string {
-  return `https://api.github.com/repos/${REPO}/contents/${encodeURI(CAMINHO_PREFERENCIAS)}`;
+  return `https://api.github.com/repos/${repoAtual()}/contents/${encodeURI(CAMINHO_PREFERENCIAS)}`;
 }
 
 function cabecalhos(token: string): Record<string, string> {
@@ -53,7 +53,7 @@ export async function lerPreferenciasRemotas(
   token: string,
   fetcher: Fetcher = fetch,
 ): Promise<PreferenciasRemotas | null> {
-  const resposta = await fetcher(`${url()}?ref=${BRANCH}`, { headers: cabecalhos(token) });
+  const resposta = await fetcher(`${url()}?ref=${branchAtual()}`, { headers: cabecalhos(token) });
   if (resposta.status === 404) return null;
   if (!resposta.ok) {
     throw new Error(`Não foi possível ler a preferência de tema (${resposta.status}).`);
@@ -78,7 +78,7 @@ export async function guardarPreferenciasRemotas(
   const corpo: Record<string, string> = {
     message: `notas-web: ${CAMINHO_PREFERENCIAS}`,
     content: codificarBase64(serializarPreferencias(preferencia), false),
-    branch: BRANCH,
+    branch: branchAtual(),
   };
   if (atual) corpo.sha = atual.sha;
   const resposta = await fetcher(url(), {

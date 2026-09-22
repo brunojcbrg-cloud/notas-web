@@ -11,7 +11,7 @@ import {
   lerBlob,
   lerNota,
   listarNotasComSha,
-  PASTA,
+  pastaAtual as pastaSessao,
   salvarNota,
   validarCaminho,
   type NotaRemota,
@@ -193,7 +193,7 @@ function limpar(): void {
 
 function limparPendentesMaterializadas(): void {
   for (const pendente of pastasPendentes) {
-    if (caminhos.some((caminho) => caminho.startsWith(`${PASTA}${pendente}/`))) pastasPendentes.delete(pendente);
+    if (caminhos.some((caminho) => caminho.startsWith(`${pastaSessao()}${pendente}/`))) pastasPendentes.delete(pendente);
   }
 }
 
@@ -942,7 +942,7 @@ function mostrarNovaPasta(pastaPai: string): void {
   const caminho = `${pastaPai ? `${pastaPai}/` : ''}${nome}`;
   try {
     if (!nome || nome.startsWith('/') || nome.endsWith('/') || nome.includes('\\')) throw new Error('Nome de pasta inválido.');
-    validarCaminho(`${PASTA}${caminho}/__validacao__.md`);
+    validarCaminho(`${pastaSessao()}${caminho}/__validacao__.md`);
     if (arvore.pastas.has(caminho)) throw new CaminhoExistente();
     pastasPendentes.add(caminho);
     arvore = construirArvore(caminhos, [...pastasPendentes]);
@@ -958,7 +958,7 @@ function mostrarCriacao(): void {
   const dialogo = elemento('dialog', 'dialogo');
   const form = elemento('form', 'dialogo-conteudo');
   form.method = 'dialog';
-  const destino = `${PASTA}${pastaAtual ? `${pastaAtual}/` : ''}`;
+  const destino = `${pastaSessao()}${pastaAtual ? `${pastaAtual}/` : ''}`;
   form.append(
     elemento('p', 'sobretitulo', 'NOVA NOTA'),
     elemento('h2', '', 'Dê um nome ao arquivo'),
@@ -1175,7 +1175,7 @@ async function renomearInterativo(origem: OrigemMovimento): Promise<void> {
       .sort((a, b) => a.localeCompare(b, 'pt-BR'));
     limparPendentesMaterializadas();
     if (origem.tipo === 'pasta') {
-      const novoCaminho = (resultado.caminhos.values().next().value as string).slice(PASTA.length);
+      const novoCaminho = (resultado.caminhos.values().next().value as string).slice(pastaSessao().length);
       const prefixoNovo = novoCaminho.split('/').slice(0, origem.caminho.split('/').length).join('/');
       const remapear = (pasta: string): string => pasta === origem.caminho || pasta.startsWith(`${origem.caminho}/`)
         ? `${prefixoNovo}${pasta.slice(origem.caminho.length)}` : pasta;

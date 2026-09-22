@@ -1,12 +1,14 @@
 import {
-  BRANCH, CaminhoExistente, ConflitoGitHub, ErroGitHub, PASTA, REPO,
+  branchAtual, CaminhoExistente, ConflitoGitHub, ErroGitHub, pastaAtual, repoAtual,
   validarCaminho, type Fetcher,
 } from './github';
 import { analisarAlvo } from './markdown';
 import { codificarBase64, decodificarBase64 } from './bytes';
 import { nomeDaNota } from './tree';
 
-const API = `https://api.github.com/repos/${REPO}`;
+function apiBase(): string {
+  return `https://api.github.com/repos/${repoAtual()}`;
+}
 
 export interface OrigemMovimento {
   tipo: 'nota' | 'pasta';
@@ -20,7 +22,7 @@ export interface ResultadoMovimento {
 
 export function validarPasta(pasta: string): void {
   if (pasta === '') return;
-  validarCaminho(`${PASTA}${pasta}/__validacao__.md`);
+  validarCaminho(`${pastaAtual()}${pasta}/__validacao__.md`);
   if (pasta.startsWith('/') || pasta.endsWith('/')) throw new Error('Pasta inválida.');
 }
 
@@ -41,10 +43,10 @@ export function planejarRenomeacao(
   } else {
     validarPasta(origem.caminho);
     if (!origem.caminho) throw new Error('A pasta principal não pode ser renomeada.');
-    const prefixo = `${PASTA}${origem.caminho}/`;
+    const prefixo = `${pastaAtual()}${origem.caminho}/`;
     const partes = origem.caminho.split('/');
     partes[partes.length - 1] = nome;
-    const novoPrefixo = `${PASTA}${partes.join('/')}/`;
+    const novoPrefixo = `${pastaAtual()}${partes.join('/')}/`;
     validarPasta(partes.join('/'));
     for (const caminho of blobs.keys()) {
       if (caminho.startsWith(prefixo)) mudancas.set(caminho, `${novoPrefixo}${caminho.slice(prefixo.length)}`);
@@ -92,7 +94,7 @@ export async function analisarRenomeacao(
   for (let i = 0; i < entradas.length; i += 8) {
     await Promise.all(entradas.slice(i, i + 8).map(async ([caminho, blobSha]) => {
       validarCaminho(caminho);
-      const dados = await requisitar(fetcher, token, `${API}/git/blobs/${blobSha}`);
+      const dados = await requisitar(fetcher, token, `${apiBase()}/git/blobs/${blobSha}`);
       if (typeof dados.content !== 'string') throw new ErroGitHub(502, 'Blob sem conteúdo.');
       const nota = decodificarBase64(dados.content);
       let quantidade = 0;
@@ -153,7 +155,7 @@ export function planejarExclusao(origem: OrigemMovimento, blobs: ReadonlyMap<str
   }
   validarPasta(origem.caminho);
   if (!origem.caminho) throw new Error('A pasta principal não pode ser apagada.');
-  const prefixo = `${PASTA}${origem.caminho}/`;
+  const prefixo = `${pastaAtual()}${origem.caminho}/`;
   const caminhos = [...blobs.keys()].filter((caminho) => caminho.startsWith(prefixo));
   if (!caminhos.length) throw new Error('Pasta sem notas ou SHAs indisponíveis. Recarregue a lista.');
   caminhos.forEach(validarCaminho);
@@ -171,21 +173,21 @@ export async function apagar(
 ): Promise<ResultadoExclusao> {
   const removidos = planejarExclusao(origem, blobs);
   if (!treeShaConhecido) throw new Error('SHA da árvore indisponível. Recarregue a lista.');
-  const ref = await requisitar(fetcher, token, `${API}/git/ref/heads/${BRANCH}`);
+  const ref = await requisitar(fetcher, token, `${apiBase()}/git/ref/heads/${branchAtual()}`);
   const commitAtual = shaDe(ref.object as Record<string, unknown>);
-  const commit = await requisitar(fetcher, token, `${API}/git/commits/${commitAtual}`);
+  const commit = await requisitar(fetcher, token, `${apiBase()}/git/commits/${commitAtual}`);
   const arvoreAtual = shaDe(commit.tree as Record<string, unknown>);
   if (arvoreAtual !== treeShaConhecido) throw new ConflitoGitHub();
   const entradas = removidos.map((path) => ({ path, mode: '100644', type: 'blob', sha: null }));
-  const arvore = await requisitar(fetcher, token, `${API}/git/trees`, 'POST', {
+  const arvore = await requisitar(fetcher, token, `${apiBase()}/git/trees`, 'POST', {
     base_tree: arvoreAtual, tree: entradas,
   });
   const novaArvore = shaDe(arvore);
-  const novoCommit = await requisitar(fetcher, token, `${API}/git/commits`, 'POST', {
+  const novoCommit = await requisitar(fetcher, token, `${apiBase()}/git/commits`, 'POST', {
     message: `notas-web: apagar ${origem.caminho} (${removidos.length} nota${removidos.length === 1 ? '' : 's'})`,
     tree: novaArvore, parents: [commitAtual],
   });
-  await requisitar(fetcher, token, `${API}/git/refs/heads/${BRANCH}`, 'PATCH', { sha: shaDe(novoCommit) });
+  await requisitar(fetcher, token, `${apiBase()}/git/refs/heads/${branchAtual()}`, 'PATCH', { sha: shaDe(novoCommit) });
   return { removidos, treeSha: novaArvore };
 }
 
@@ -199,16 +201,16 @@ export async function renomear(
     if (blobs.has(novo) && !plano.caminhos.has(novo)) throw new CaminhoExistente();
   }
   if (!treeShaConhecido) throw new Error('SHA da árvore indisponível. Recarregue a lista.');
-  const ref = await requisitar(fetcher, token, `${API}/git/ref/heads/${BRANCH}`);
+  const ref = await requisitar(fetcher, token, `${apiBase()}/git/ref/heads/${branchAtual()}`);
   const commitAtual = shaDe(ref.object as Record<string, unknown>);
-  const commit = await requisitar(fetcher, token, `${API}/git/commits/${commitAtual}`);
+  const commit = await requisitar(fetcher, token, `${apiBase()}/git/commits/${commitAtual}`);
   const arvoreAtual = shaDe(commit.tree as Record<string, unknown>);
   if (arvoreAtual !== treeShaConhecido) throw new ConflitoGitHub();
   const novosShas = new Map<string, string>();
   for (const item of plano.reescritas) {
     validarCaminho(item.caminho);
     if (blobs.get(item.caminho) !== item.blobSha) throw new ConflitoGitHub();
-    const criado = await requisitar(fetcher, token, `${API}/git/blobs`, 'POST', {
+    const criado = await requisitar(fetcher, token, `${apiBase()}/git/blobs`, 'POST', {
       content: codificarBase64(item.texto, item.tinhaBom), encoding: 'base64',
     });
     novosShas.set(item.caminho, shaDe(criado));
@@ -221,14 +223,14 @@ export async function renomear(
   for (const [caminho, sha] of novosShas) {
     if (!plano.caminhos.has(caminho)) entradas.push({ path: caminho, mode: '100644', type: 'blob', sha });
   }
-  const arvore = await requisitar(fetcher, token, `${API}/git/trees`, 'POST', { base_tree: arvoreAtual, tree: entradas });
+  const arvore = await requisitar(fetcher, token, `${apiBase()}/git/trees`, 'POST', { base_tree: arvoreAtual, tree: entradas });
   const novaArvore = shaDe(arvore);
   const nomeNovo = origem.tipo === 'nota' ? plano.caminhos.get(origem.caminho) : [...plano.caminhos.values()][0];
-  const novoCommit = await requisitar(fetcher, token, `${API}/git/commits`, 'POST', {
+  const novoCommit = await requisitar(fetcher, token, `${apiBase()}/git/commits`, 'POST', {
     message: `notas-web: renomear ${origem.caminho} → ${nomeNovo}`,
     tree: novaArvore, parents: [commitAtual],
   });
-  await requisitar(fetcher, token, `${API}/git/refs/heads/${BRANCH}`, 'PATCH', { sha: shaDe(novoCommit) });
+  await requisitar(fetcher, token, `${apiBase()}/git/refs/heads/${branchAtual()}`, 'PATCH', { sha: shaDe(novoCommit) });
   return { caminhos: plano.caminhos, treeSha: novaArvore, blobsReescritos: novosShas };
 }
 
@@ -243,7 +245,7 @@ export function planejarMovimento(
     validarCaminho(origem.caminho);
     const nome = origem.caminho.split('/').at(-1) as string;
     if (!blobs.has(origem.caminho)) throw new Error('SHA da nota indisponível. Recarregue a lista.');
-    mudancas.set(origem.caminho, `${PASTA}${destino ? `${destino}/` : ''}${nome}`);
+    mudancas.set(origem.caminho, `${pastaAtual()}${destino ? `${destino}/` : ''}${nome}`);
   } else {
     validarPasta(origem.caminho);
     if (!origem.caminho) throw new Error('A pasta principal não pode ser movida.');
@@ -251,8 +253,8 @@ export function planejarMovimento(
       throw new Error('Uma pasta não pode ser movida para dentro de si mesma.');
     }
     const nome = origem.caminho.split('/').at(-1) as string;
-    const prefixo = `${PASTA}${origem.caminho}/`;
-    const novoPrefixo = `${PASTA}${destino ? `${destino}/` : ''}${nome}/`;
+    const prefixo = `${pastaAtual()}${origem.caminho}/`;
+    const novoPrefixo = `${pastaAtual()}${destino ? `${destino}/` : ''}${nome}/`;
     if ([...blobs.keys()].some((caminho) => caminho.startsWith(novoPrefixo))) throw new CaminhoExistente();
     for (const caminho of blobs.keys()) {
       if (caminho.startsWith(prefixo)) mudancas.set(caminho, `${novoPrefixo}${caminho.slice(prefixo.length)}`);
@@ -312,9 +314,9 @@ export async function mover(
 ): Promise<ResultadoMovimento> {
   const mudancas = planejarMovimento(origem, destino, blobs);
   if (!treeShaConhecido) throw new Error('SHA da árvore indisponível. Recarregue a lista.');
-  const ref = await requisitar(fetcher, token, `${API}/git/ref/heads/${BRANCH}`);
+  const ref = await requisitar(fetcher, token, `${apiBase()}/git/ref/heads/${branchAtual()}`);
   const commitAtual = shaDe(ref.object as Record<string, unknown>);
-  const commit = await requisitar(fetcher, token, `${API}/git/commits/${commitAtual}`);
+  const commit = await requisitar(fetcher, token, `${apiBase()}/git/commits/${commitAtual}`);
   const arvoreAtual = shaDe(commit.tree as Record<string, unknown>);
   if (arvoreAtual !== treeShaConhecido) throw new ConflitoGitHub();
 
@@ -323,19 +325,19 @@ export async function mover(
     entradas.push({ path: antigo, mode: '100644', type: 'blob', sha: null });
     entradas.push({ path: novo, mode: '100644', type: 'blob', sha: blobs.get(antigo) as string });
   }
-  const arvore = await requisitar(fetcher, token, `${API}/git/trees`, 'POST', {
+  const arvore = await requisitar(fetcher, token, `${apiBase()}/git/trees`, 'POST', {
     base_tree: arvoreAtual, tree: entradas,
   });
   const novaArvore = shaDe(arvore);
   const nomeDestino = origem.tipo === 'nota'
     ? mudancas.get(origem.caminho) as string
-    : `${PASTA}${destino ? `${destino}/` : ''}${origem.caminho.split('/').at(-1)}/`;
-  const novoCommit = await requisitar(fetcher, token, `${API}/git/commits`, 'POST', {
+    : `${pastaAtual()}${destino ? `${destino}/` : ''}${origem.caminho.split('/').at(-1)}/`;
+  const novoCommit = await requisitar(fetcher, token, `${apiBase()}/git/commits`, 'POST', {
     message: `notas-web: mover ${origem.caminho} → ${nomeDestino}`,
     tree: novaArvore,
     parents: [commitAtual],
   });
-  await requisitar(fetcher, token, `${API}/git/refs/heads/${BRANCH}`, 'PATCH', {
+  await requisitar(fetcher, token, `${apiBase()}/git/refs/heads/${branchAtual()}`, 'PATCH', {
     sha: shaDe(novoCommit),
   });
   return { caminhos: mudancas, treeSha: novaArvore };

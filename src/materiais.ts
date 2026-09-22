@@ -1,5 +1,5 @@
 import { decodificarBase64 } from './bytes';
-import { BRANCH, REPO, type Fetcher } from './github';
+import { branchAtual, repoAtual, type Fetcher } from './github';
 import type { ArvoreNotas, NotaArvore, PastaArvore } from './tree';
 
 export const CAMINHO_MANIFESTO = '05_Sistema/notas-web/materiais.json';
@@ -72,7 +72,7 @@ export function analisarManifesto(valor: unknown, agora = Date.now()): EstadoMat
 export async function lerManifestoMateriais(token: string, fetcher: Fetcher = fetch): Promise<EstadoMateriais> {
   try {
     const caminho = CAMINHO_MANIFESTO.split('/').map(encodeURIComponent).join('/');
-    const resposta = await fetcher(`https://api.github.com/repos/${REPO}/contents/${caminho}?ref=${BRANCH}`, {
+    const resposta = await fetcher(`https://api.github.com/repos/${repoAtual()}/contents/${caminho}?ref=${branchAtual()}`, {
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${token}`,
@@ -97,7 +97,8 @@ function novaPasta(nome: string, caminho: string): PastaArvore {
   return { tipo: 'pasta', nome, caminho, pastas: new Map(), notas: [], totalNotas: 0 };
 }
 
-// Devolve o contrato da lateral sem passar por construirArvore, PASTA ou validarCaminho.
+// Devolve o contrato da lateral sem passar por construirArvore ou validarCaminho
+// (materiais não moram em 06_Conhecimento/, então a validação de pastaAtual() não se aplica).
 export function construirArvoreMateriais(arquivos: readonly Material[]): ArvoreNotas {
   const raiz = novaPasta('Materiais', '');
   const pastas = new Map<string, PastaArvore>([['', raiz]]);
