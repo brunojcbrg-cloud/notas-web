@@ -151,7 +151,7 @@ def certificar(navegador, url: str) -> bool:
         pagina.keyboard.press("End")
         pagina.keyboard.type(" mais texto")
         pagina.get_by_role("button", name="Salvar", exact=True).click()
-        pagina.wait_for_function("() => document.querySelector('.estado-salvo')?.textContent === 'Salvo'")
+        pagina.wait_for_function("() => document.querySelector('.estado-salvo')?.textContent?.startsWith('Salvo')")
         verificar(122, "nota aberta salva no caminho novo, sem recriar origem",
                  estado["puts"][-1][0] == DESTINO and NOTA not in estado["blobs"]
                  and b"mais texto" in estado["bytes"][estado["blobs"][DESTINO]],

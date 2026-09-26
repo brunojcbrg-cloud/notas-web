@@ -1,7 +1,7 @@
 # Execute com: py -3.14 scripts/verificar-web-e2e.py
 # -*- coding: utf-8 -*-
 # O Python do PATH não contém o Playwright usado por esta certificação.
-"""Casos 66–67, 83–98, 101–118, 145–167 no Edge real.
+"""Casos 66–67, 83–98, 101–118, 145–167 e 237 no Edge real.
 
 Por padrão serve o build docs/ local para certificar antes do push. Use --url
 para conferir uma publicação específica depois do push.
@@ -44,11 +44,13 @@ def main() -> int:
     from certificar_handoff_08 import certificar as certificar_08
     from certificar_imagem_e_tema import certificar as certificar_imagem
     from certificar_sugestao_wikilink import certificar as certificar_wikilink
+    from certificar_autosave import certificar as certificar_autosave
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", help=f"endereço externo (padrão: docs/ local; publicado: {PUBLICADA})")
     parser.add_argument("--ver", action="store_true", help="abre o Edge visível")
     parser.add_argument("--screenshot", help="salva print com quatro níveis abertos")
+    parser.add_argument("--autosave-only", action="store_true", help="executa somente o caso 237")
     args = parser.parse_args()
 
     erros_javascript: list[str] = []
@@ -71,6 +73,11 @@ def main() -> int:
     try:
       with sync_playwright() as playwright:
         navegador = playwright.chromium.launch(channel="msedge", headless=not args.ver)
+        if args.autosave_only:
+            try:
+                return 0 if certificar_autosave(navegador, url) else 1
+            finally:
+                navegador.close()
         pagina = navegador.new_context().new_page()
         pagina.on("pageerror", lambda erro: erros_javascript.append(str(erro)))
 
@@ -124,9 +131,10 @@ def main() -> int:
             caso_08 = certificar_08(navegador, url) if caso_07 else False
             caso_imagem = certificar_imagem(navegador, url) if caso_08 else False
             caso_wikilink = certificar_wikilink(navegador, url) if caso_imagem else False
+            caso_autosave = certificar_autosave(navegador, url) if caso_wikilink else False
             return (
                 0
-                if caso_66 and caso_67 and caso_05 and caso_06 and caso_07 and caso_08 and caso_imagem and caso_wikilink
+                if caso_66 and caso_67 and caso_05 and caso_06 and caso_07 and caso_08 and caso_imagem and caso_wikilink and caso_autosave
                 else 1
             )
         finally:

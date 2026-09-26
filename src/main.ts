@@ -50,6 +50,15 @@ import { ErroLoginGoogle, googleDisponivel, localizarESolicitarPasse, solicitarT
 import { validarPasse } from './passe';
 import { guardarPreferenciasRemotas, lerPreferenciasRemotas } from './preferencias';
 import {
+  AgendadorAutosave,
+  apagarRascunho,
+  guardarRascunho,
+  lerRascunho,
+  listarRascunhos,
+  salvarAntesDeTrancar,
+  type RascunhoPersistente,
+} from './rascunhos';
+import {
   aplicarTema,
   guardarPreferenciaTema,
   lerPreferenciaTema,
@@ -125,9 +134,10 @@ let nota: NotaRemota | null = null;
 let editor: EditorView | null = null;
 let estadoSalvo: EditorState | null = null;
 let textoSalvoAtual: string | null = null;
-let salvando = false;
+let salvamentoEmCurso: Promise<boolean> | null = null;
 let movendo = false;
 let salvarAtual: ((forcar?: boolean) => Promise<boolean>) | null = null;
+let agendadorAutosave: AgendadorAutosave | null = null;
 let pararBloqueio: (() => void) | null = null;
 let casca: HTMLElement | null = null;
 let conteudo: HTMLElement | null = null;
@@ -165,13 +175,7 @@ let subtituloCabecalho: HTMLElement | null = null;
 let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' | 'materiais' | 'material-html' = 'entrada';
 let sequenciaAbertura = 0;
 
-interface RascunhoMemoria {
-  nota: NotaRemota;
-  texto: string;
-  pastaRetorno: string;
-}
-
-let rascunhoMemoria: RascunhoMemoria | null = null;
+let rascunhoMemoria: RascunhoPersistente | null = null;
 
 function elemento<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -190,6 +194,8 @@ function erroSeguro(erro: unknown): string {
 }
 
 function limpar(): void {
+  agendadorAutosave?.parar();
+  agendadorAutosave = null;
   editor?.destroy();
   editor = null;
   estadoSalvo = null;
@@ -204,7 +210,13 @@ function limparPendentesMaterializadas(): void {
 }
 
 function confirmarDescarte(): boolean {
-  return !temAlteracoes() || window.confirm('Descartar as alterações não gravadas?');
+  if (!temAlteracoes()) return true;
+  const confirmou = window.confirm('Descartar as alterações não gravadas?');
+  if (confirmou && nota) {
+    apagarRascunho(localStorage, nota.caminho);
+    if (rascunhoMemoria?.caminho === nota.caminho) rascunhoMemoria = null;
+  }
+  return confirmou;
 }
 
 function telaPequena(): boolean {
@@ -534,10 +546,18 @@ function capturarRascunho(): boolean {
   if (!temAlteracoes() || !editor || !nota) return true;
   try {
     rascunhoMemoria = {
-      nota: { ...nota, texto: textoSalvoAtual ?? nota.texto },
+      versao: 1,
+      caminho: nota.caminho,
       texto: textoExato(editor.state),
+      textoBase: textoSalvoAtual ?? nota.texto,
+      shaBase: nota.sha,
+      tinhaBom: nota.tinhaBom,
+      somenteLeitura: nota.somenteLeitura,
+      eol: nota.eol,
       pastaRetorno,
+      atualizadoEm: Date.now(),
     };
+    guardarRascunho(localStorage, rascunhoMemoria);
     return true;
   } catch (erro) {
     window.alert(`A página não foi bloqueada porque não conseguiu preservar a edição: ${erroSeguro(erro)}`);
@@ -545,11 +565,23 @@ function capturarRascunho(): boolean {
   }
 }
 
-function trancarPorInatividade(): boolean {
-  if (!capturarRascunho()) return false;
-  encerrarSessao();
-  mostrarEntrada('Sessão bloqueada por inatividade. Entre novamente para continuar.');
-  return true;
+async function salvarComPrazoAntesDoBloqueio(): Promise<boolean> {
+  if (!salvarAtual || !temAlteracoes()) return true;
+  return Promise.race([
+    salvarAtual(),
+    new Promise<boolean>((resolve) => window.setTimeout(() => resolve(false), 20_000)),
+  ]);
+}
+
+function trancarPorInatividade(): Promise<boolean> {
+  return salvarAntesDeTrancar(
+    capturarRascunho,
+    salvarComPrazoAntesDoBloqueio,
+    () => {
+      encerrarSessao();
+      mostrarEntrada('Sessão bloqueada por inatividade. Entre novamente para continuar.');
+    },
+  );
 }
 
 function iniciarBloqueio(): void {
@@ -577,7 +609,8 @@ async function concluirEntrada(tokenGitHub: string): Promise<void> {
   const secaoInicial = window.location.hash === '#materiais' ? 'materiais' : lerSecaoPreferida();
   if (secaoInicial === 'materiais') selecionarSecao('materiais');
   void sincronizarPreferenciasDoVault();
-  if (rascunhoMemoria) oferecerRascunho();
+  const rascunho = rascunhoMemoria ?? listarRascunhos(localStorage)[0] ?? null;
+  if (rascunho) oferecerRascunho(rascunho);
 }
 
 function mostrarEntrada(mensagem = ''): void {
@@ -713,6 +746,8 @@ async function abrirNota(
     if (abertura !== sequenciaAbertura) return;
     nota = carregada;
     mostrarNota(modoInicial, secao);
+    const rascunho = lerRascunho(localStorage, caminho);
+    if (rascunho && rascunho.texto !== carregada.texto) oferecerRascunho(rascunho);
   } catch (erro) {
     if (abertura !== sequenciaAbertura) return;
     mostrarLista(erroSeguro(erro));
@@ -1354,6 +1389,7 @@ function mostrarNota(
   modos.append(fonte, preview, leitura);
   const direita = elemento('div', 'acoes-nota');
   const estado = elemento('span', 'estado-salvo', 'Salvo');
+  let rotuloSalvo = 'Salvo';
   const salvar = elemento('button', 'botao botao-primario', 'Salvar');
   salvar.type = 'button';
   direita.append(estado, salvar);
@@ -1382,7 +1418,7 @@ function mostrarNota(
   const atualizarEstado = (): void => {
     if (!editor || !estadoSalvo) return;
     const alterado = !mesmoTexto(editor.state, estadoSalvo);
-    estado.textContent = alterado ? 'Alterações não gravadas' : 'Salvo';
+    estado.textContent = alterado ? 'Alterações não gravadas' : rotuloSalvo;
     estado.classList.toggle('alterado', alterado);
   };
 
@@ -1441,7 +1477,10 @@ function mostrarNota(
     EditorView.lineWrapping,
     EditorView.domEventHandlers({ paste: colarImagem }),
     EditorView.updateListener.of((atualizacao) => {
-      if (atualizacao.docChanged) atualizarEstado();
+      if (!atualizacao.docChanged) return;
+      atualizarEstado();
+      capturarRascunho();
+      agendadorAutosave?.alterou();
     }),
     EditorView.theme({
       '&': { height: '100%' },
@@ -1469,31 +1508,62 @@ function mostrarNota(
   };
 
   salvarAtual = async (forcar = false): Promise<boolean> => {
-    if (!editor || !nota || salvando || nota.somenteLeitura || !token) return false;
+    if (salvamentoEmCurso) {
+      await salvamentoEmCurso;
+      if (!temAlteracoes() && !forcar) return true;
+    }
+    if (!editor || !nota || nota.somenteLeitura || !token) return false;
     if (!temAlteracoes() && !forcar) return true;
-    salvando = true;
-    salvar.disabled = true;
-    salvar.textContent = 'Salvando…';
+
+    const editorAlvo = editor;
+    const notaAlvo = nota;
+    const tokenAlvo = token;
+    const estadoEnviado = editorAlvo.state;
+    const textoEnviado = textoExato(estadoEnviado);
+    const executar = async (): Promise<boolean> => {
+      salvar.disabled = true;
+      salvar.textContent = 'Salvando…';
+      estado.textContent = 'Salvando…';
+      estado.classList.remove('alterado');
+      try {
+        const content = codificarEstado(estadoEnviado, notaAlvo.tinhaBom, notaAlvo.somenteLeitura);
+        const resultado = await salvarNota(tokenAlvo, notaAlvo.caminho, content, notaAlvo.sha);
+        notaAlvo.sha = resultado.sha;
+        blobs.set(notaAlvo.caminho, resultado.sha);
+        treeSha = resultado.treeSha ?? '';
+        estadoSalvo = estadoEnviado;
+        textoSalvoAtual = textoEnviado;
+        rotuloSalvo = `Salvo ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+        const textoAtual = editor === editorAlvo ? textoExato(editorAlvo.state) : null;
+        if (textoAtual === textoEnviado) {
+          apagarRascunho(localStorage, notaAlvo.caminho);
+          if (rascunhoMemoria?.caminho === notaAlvo.caminho) rascunhoMemoria = null;
+        } else if (textoAtual !== null) {
+          capturarRascunho();
+          agendadorAutosave?.alterou();
+        }
+        atualizarEstado();
+        return true;
+      } catch (erro) {
+        estado.textContent = 'Falhou ao salvar';
+        estado.classList.add('alterado');
+        if (erro instanceof ConflitoGitHub) mostrarConflito();
+        else if (forcar) window.alert(erroSeguro(erro));
+        return false;
+      } finally {
+        salvar.disabled = nota?.somenteLeitura ?? false;
+        salvar.textContent = 'Salvar';
+      }
+    };
+    const atual = executar();
+    salvamentoEmCurso = atual;
     try {
-      const content = codificarEstado(editor.state, nota.tinhaBom, nota.somenteLeitura);
-      const resultado = await salvarNota(token, nota.caminho, content, nota.sha);
-      nota.sha = resultado.sha;
-      blobs.set(nota.caminho, resultado.sha);
-      treeSha = resultado.treeSha ?? '';
-      estadoSalvo = editor.state;
-      textoSalvoAtual = textoExato(editor.state);
-      atualizarEstado();
-      return true;
-    } catch (erro) {
-      if (erro instanceof ConflitoGitHub) mostrarConflito();
-      else window.alert(erroSeguro(erro));
-      return false;
+      return await atual;
     } finally {
-      salvando = false;
-      salvar.disabled = nota?.somenteLeitura ?? false;
-      salvar.textContent = 'Salvar';
+      if (salvamentoEmCurso === atual) salvamentoEmCurso = null;
     }
   };
+  agendadorAutosave = new AgendadorAutosave(() => salvarAtual?.() ?? Promise.resolve(false));
   const ativarFonte = (): void => {
     if (editor) configurarLivePreview(editor, compartimentoPreview, false);
     editor?.dispatch({ effects: compartimentoNumeros.reconfigure(lineNumbers()) });
@@ -1603,18 +1673,19 @@ function mostrarNota(
   else if (modoInicial === 'preview') ativarPreview();
 }
 
-function oferecerRascunho(): void {
-  if (!rascunhoMemoria) return;
-  const guardado = rascunhoMemoria;
+function oferecerRascunho(guardado: RascunhoPersistente): void {
+  if (document.querySelector('dialog[data-rascunho="true"]')) return;
   const dialogo = elemento('dialog', 'dialogo');
+  dialogo.dataset.rascunho = 'true';
   const caixa = elemento('div', 'dialogo-conteudo');
+  const remotoMudou = Boolean(nota?.caminho === guardado.caminho && nota.sha !== guardado.shaBase);
   caixa.append(
     elemento('p', 'sobretitulo', 'EDIÇÃO PRESERVADA'),
     elemento('h2', '', 'Continuar de onde parou?'),
     elemento(
       'p',
       'dialogo-texto',
-      `A edição não gravada de ${nomeDaNota(guardado.nota.caminho)} ficou somente na memória desta aba.`,
+      `A edição não gravada de ${nomeDaNota(guardado.caminho)} foi preservada neste dispositivo${remotoMudou ? ', mas a nota remota mudou depois dela' : ''}.`,
     ),
   );
   const acoes = elemento('div', 'dialogo-acoes');
@@ -1622,15 +1693,30 @@ function oferecerRascunho(): void {
   const restaurar = elemento('button', 'botao botao-primario', 'Restaurar edição');
   descartar.type = restaurar.type = 'button';
   descartar.addEventListener('click', () => {
+    apagarRascunho(localStorage, guardado.caminho);
     rascunhoMemoria = null;
     dialogo.close();
   });
   restaurar.addEventListener('click', () => {
-    rascunhoMemoria = null;
-    nota = { ...guardado.nota, texto: guardado.texto };
-    pastaRetorno = guardado.pastaRetorno;
-    dialogo.close();
-    mostrarNota('fonte', '', guardado.nota.texto);
+    void (async () => {
+      if (!token) return;
+      restaurar.disabled = true;
+      restaurar.textContent = 'Restaurando…';
+      try {
+        const remota = nota?.caminho === guardado.caminho
+          ? nota
+          : await lerNota(token, guardado.caminho);
+        rascunhoMemoria = guardado;
+        nota = { ...remota, texto: guardado.texto };
+        pastaRetorno = guardado.pastaRetorno;
+        dialogo.close();
+        mostrarNota('fonte', '', remota.texto);
+      } catch (erro) {
+        window.alert(erroSeguro(erro));
+        restaurar.disabled = false;
+        restaurar.textContent = 'Restaurar edição';
+      }
+    })();
   });
   acoes.append(descartar, restaurar);
   caixa.append(acoes);
@@ -1697,7 +1783,20 @@ function mostrarConflito(): void {
 
 window.addEventListener('beforeunload', (evento) => {
   if (!temAlteracoes()) return;
+  capturarRascunho();
   evento.preventDefault();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden' || !temAlteracoes()) return;
+  capturarRascunho();
+  void agendadorAutosave?.salvarAgora();
+});
+
+window.addEventListener('pagehide', () => {
+  if (!temAlteracoes()) return;
+  capturarRascunho();
+  void agendadorAutosave?.salvarAgora();
 });
 
 if (token) {
@@ -1716,6 +1815,8 @@ if (token) {
       lateralMateriais?.atualizarArvore(arvoreMateriais);
       mostrarLista();
       void sincronizarPreferenciasDoVault();
+      const rascunho = listarRascunhos(localStorage)[0] ?? null;
+      if (rascunho) oferecerRascunho(rascunho);
     })
     .catch((erro) => {
       encerrarSessao();

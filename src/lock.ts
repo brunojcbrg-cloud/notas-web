@@ -11,7 +11,7 @@ export class BloqueioInatividade {
   private ativo = false;
 
   constructor(
-    private readonly aoTrancar: () => boolean | void,
+    private readonly aoTrancar: () => boolean | void | Promise<boolean | void>,
     // Embrulhados de proposito: como propriedade de classe, `this.agendar(...)`
     // chamaria o nativo tendo a instancia como dono, e o navegador recusa com
     // "Illegal invocation". O relogio falso dos testes nao impoe essa regra.
@@ -60,10 +60,14 @@ export class BloqueioInatividade {
     this.oculta = null;
   }
 
-  private trancar(): void {
+  private async trancar(): Promise<void> {
     if (!this.ativo) return;
     this.parar();
-    if (this.aoTrancar() === false) this.iniciar();
+    try {
+      if (await this.aoTrancar() === false) this.iniciar();
+    } catch {
+      this.iniciar();
+    }
   }
 }
 

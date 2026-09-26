@@ -104,7 +104,7 @@ def certificar(navegador, url: str) -> bool:
         )
         pagina.get_by_role("button", name="Salvar", exact=True).click()
         pagina.wait_for_function(
-            "() => document.querySelector('.estado-salvo')?.textContent === 'Salvo'"
+            "() => document.querySelector('.estado-salvo')?.textContent?.startsWith('Salvo')"
         )
         esperado = NOTA + b"[[Medula Espinal]]"
         verificar(
