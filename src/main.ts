@@ -81,6 +81,7 @@ import {
   lerUltimaGravacao,
   registrarUltimaGravacao,
 } from './sincronizacao';
+import { abrirVisorDeImagem } from './visorImagem';
 import {
   construirArvore,
   entradasDaPasta,
@@ -1801,6 +1802,15 @@ function mostrarNota(
   leituraHost.addEventListener('click', (evento) => {
     const alvoEvento = evento.target;
     if (!(alvoEvento instanceof Element)) return;
+    if (
+      alvoEvento instanceof HTMLImageElement &&
+      alvoEvento.classList.contains('nota-imagem') &&
+      !alvoEvento.classList.contains('nota-imagem-faltante') &&
+      alvoEvento.src
+    ) {
+      abrirVisorDeImagem(alvoEvento.src, alvoEvento.alt);
+      return;
+    }
     const link = alvoEvento.closest<HTMLAnchorElement>('a.nota-link');
     if (!link) return;
     evento.preventDefault();

@@ -28,6 +28,7 @@ import {
   rotuloDoEmbed,
 } from './markdown';
 import { ehImagem } from './anexos';
+import { abrirVisorDeImagem } from './visorImagem';
 
 /**
  * O modo ao vivo tem de mostrar o mesmo que o modo leitura -- a diferença é que
@@ -130,6 +131,14 @@ class ImagemEmbutida extends WidgetType {
       },
       () => img.classList.add('cm-lp-imagem-faltante'),
     );
+    // Sem parar a propagação: o clique continua movendo o cursor pro texto
+    // cru nesse ponto (comportamento já existente do ao vivo), e agora
+    // também abre o visor em tela cheia (§Z.2).
+    img.addEventListener('click', () => {
+      if (img.src && !img.classList.contains('cm-lp-imagem-faltante')) {
+        abrirVisorDeImagem(img.src, img.alt);
+      }
+    });
     return img;
   }
 
