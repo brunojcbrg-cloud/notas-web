@@ -75,6 +75,13 @@ import {
   type EstadoRegistroTriade,
 } from './triade';
 import {
+  CHAVE_LATERAL_SINCRONIZACAO,
+  avaliarSincronizacaoWeb,
+  criarPainelSincronizacaoWeb,
+  lerUltimaGravacao,
+  registrarUltimaGravacao,
+} from './sincronizacao';
+import {
   construirArvore,
   entradasDaPasta,
   filtrarNotas,
@@ -151,17 +158,18 @@ let conteudo: HTMLElement | null = null;
 let lateral: Lateral | null = null;
 let lateralMateriais: Lateral | null = null;
 let lateralTriade: Lateral | null = null;
+let lateralSincronizacao: Lateral | null = null;
 let estadoMateriais: EstadoMateriais = { tipo: 'ausente', mensagem: 'Manifesto ainda não gerado. Rode o gerador no PC e sincronize o vault.' };
 let estadoTriade: EstadoRegistroTriade = { tipo: 'ausente', mensagem: 'Registro da tríade ainda não sincronizado.' };
 let arvoreMateriais: ArvoreNotas = construirArvoreMateriais([]);
 let materiaisPorCaminho = new Map<string, Material>();
 const CHAVE_SECAO_PREFERIDA = 'notas-web.secao-preferida';
-type SecaoApp = 'conhecimento' | 'materiais' | 'triade';
+type SecaoApp = 'conhecimento' | 'materiais' | 'triade' | 'sincronizacao';
 
 function lerSecaoPreferida(): SecaoApp | null {
   try {
     const valor = localStorage.getItem(CHAVE_SECAO_PREFERIDA);
-    return valor === 'materiais' || valor === 'conhecimento' || valor === 'triade' ? valor : null;
+    return valor === 'materiais' || valor === 'conhecimento' || valor === 'triade' || valor === 'sincronizacao' ? valor : null;
   } catch {
     return null;
   }
@@ -178,11 +186,11 @@ function guardarSecaoPreferida(secao: SecaoApp): void {
 let secaoAtual: SecaoApp = 'conhecimento';
 let materialHtmlAtual: Material | null = null;
 let pastaMaterialAtual = '';
-const rolagemLaterais: Record<SecaoApp, number> = { conhecimento: 0, materiais: 0, triade: 0 };
+const rolagemLaterais: Record<SecaoApp, number> = { conhecimento: 0, materiais: 0, triade: 0, sincronizacao: 0 };
 let botaoLateral: HTMLButtonElement | null = null;
 let botaoVoltar: HTMLButtonElement | null = null;
 let subtituloCabecalho: HTMLElement | null = null;
-let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' | 'materiais' | 'material-html' | 'triade' = 'entrada';
+let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' | 'materiais' | 'material-html' | 'triade' | 'sincronizacao' = 'entrada';
 let sequenciaAbertura = 0;
 
 let rascunhoMemoria: RascunhoPersistente | null = null;
@@ -236,6 +244,7 @@ function telaPequena(): boolean {
 function lateralDaSecao(secao: SecaoApp): Lateral | null {
   if (secao === 'materiais') return lateralMateriais;
   if (secao === 'triade') return lateralTriade;
+  if (secao === 'sincronizacao') return lateralSincronizacao;
   return lateral;
 }
 
@@ -257,11 +266,12 @@ function definirLateralAberta(aberta: boolean): void {
   lateral?.definirAberta(aberta);
   lateralMateriais?.definirAberta(aberta);
   lateralTriade?.definirAberta(aberta);
+  lateralSincronizacao?.definirAberta(aberta);
   sincronizarLateral();
 }
 
 function atualizarAbas(): void {
-  for (const aside of [lateral?.elemento, lateralMateriais?.elemento, lateralTriade?.elemento]) {
+  for (const aside of [lateral?.elemento, lateralMateriais?.elemento, lateralTriade?.elemento, lateralSincronizacao?.elemento]) {
     aside?.querySelectorAll<HTMLButtonElement>('.aba-secao').forEach((botao) => {
       const ativa = botao.dataset.secao === secaoAtual;
       botao.classList.toggle('ativa', ativa);
@@ -286,6 +296,7 @@ function selecionarSecao(secao: SecaoApp): void {
   sincronizarLateral();
   if (secao === 'materiais') mostrarMateriais();
   else if (secao === 'triade') mostrarTriade();
+  else if (secao === 'sincronizacao') void mostrarSincronizacao();
   else mostrarLista('', false);
 }
 
@@ -296,6 +307,7 @@ function inserirAbas(painel: Lateral): void {
     ['conhecimento', 'Conhecimento'],
     ['materiais', 'Materiais'],
     ['triade', 'Tríade'],
+    ['sincronizacao', 'Sync'],
   ] as const) {
     const botao = elemento('button', 'aba-secao', nome);
     botao.type = 'button';
@@ -563,9 +575,27 @@ function montarCasca(): void {
   lateralTriade.elemento.querySelector('.lateral-arvore')?.append(
     elemento('p', 'lateral-triade-ajuda', 'Um registro para conferir o que já chegou aos três clientes.'),
   );
+  lateralSincronizacao = criarLateral(
+    construirArvore([]), localStorage, () => {}, () => {}, !telaPequena(),
+    undefined, undefined, undefined, undefined, undefined,
+    {
+      chaveEstado: CHAVE_LATERAL_SINCRONIZACAO,
+      titulo: 'SINCRONIZAÇÃO',
+      unidade: 'rascunhos',
+      ariaLabel: 'Estado da sincronização web',
+      simboloArquivo: '·',
+    },
+  );
+  lateralSincronizacao.elemento.id = 'explorador-sincronizacao';
+  const contagemSync = lateralSincronizacao.elemento.querySelector('.lateral-total');
+  if (contagemSync) contagemSync.textContent = `${listarRascunhos(localStorage).length} rascunhos`;
+  lateralSincronizacao.elemento.querySelector('.lateral-arvore')?.append(
+    elemento('p', 'lateral-triade-ajuda', 'A web compara rascunhos locais e SHAs do GitHub; ela não possui clone Git.'),
+  );
   inserirAbas(lateral);
   inserirAbas(lateralMateriais);
   inserirAbas(lateralTriade);
+  inserirAbas(lateralSincronizacao);
   atualizarAbas();
   conteudo = elemento('main', 'app-conteudo');
   corpo.append(lateral.elemento, conteudo);
@@ -661,6 +691,8 @@ async function concluirEntrada(tokenGitHub: string): Promise<void> {
     ? 'materiais'
     : window.location.hash === '#triade'
       ? 'triade'
+      : window.location.hash === '#sincronizacao'
+        ? 'sincronizacao'
       : lerSecaoPreferida();
   if (secaoInicial && secaoInicial !== 'conhecimento') selecionarSecao(secaoInicial);
   void sincronizarPreferenciasDoVault();
@@ -679,6 +711,7 @@ function mostrarEntrada(mensagem = ''): void {
   subtituloCabecalho = null;
   lateralMateriais = null;
   lateralTriade = null;
+  lateralSincronizacao = null;
   telaAtual = 'entrada';
   const pagina = elemento('main', 'entrada');
   const painel = elemento('section', 'entrada-painel');
@@ -1066,6 +1099,45 @@ function mostrarTriade(): void {
   atualizarCabecalho(`${total} funções na tríade`);
   lateral?.selecionarNota(null);
   conteudo?.append(criarVisorTriade(estadoTriade));
+}
+
+async function mostrarSincronizacao(): Promise<void> {
+  limpar();
+  montarCasca();
+  telaAtual = 'sincronizacao';
+  casca?.classList.remove('nota-ativa');
+  atualizarCabecalho('Estado da sincronização web');
+  lateral?.selecionarNota(null);
+  const aberta = nota ? { caminho: nota.caminho, sha: nota.sha } : null;
+  const carregando = elemento('section', 'estado-central');
+  carregando.append(elemento('div', 'spinner'), elemento('p', '', 'Conferindo o GitHub…'));
+  conteudo?.append(carregando);
+  try {
+    if (!token) throw new Error('Sessão encerrada. Entre novamente.');
+    const lista = await listarNotasComSha(token);
+    caminhos = lista.caminhos;
+    blobs = lista.blobs;
+    treeSha = lista.treeSha;
+    arvore = construirArvore(caminhos, [...pastasPendentes]);
+    lateral?.atualizarArvore(arvore);
+    const estado = avaliarSincronizacaoWeb({
+      rascunhos: listarRascunhos(localStorage),
+      caminhoAberto: aberta?.caminho,
+      shaAberto: aberta?.sha,
+      shaRemoto: aberta ? blobs.get(aberta.caminho) : undefined,
+      ultima: lerUltimaGravacao(localStorage),
+    });
+    if (telaAtual === 'sincronizacao') conteudo?.replaceChildren(criarPainelSincronizacaoWeb(estado, () => void mostrarSincronizacao()));
+  } catch (erro) {
+    const estado = avaliarSincronizacaoWeb({
+      rascunhos: listarRascunhos(localStorage),
+      caminhoAberto: aberta?.caminho,
+      shaAberto: aberta?.sha,
+      ultima: lerUltimaGravacao(localStorage),
+      erro: erroSeguro(erro),
+    });
+    if (telaAtual === 'sincronizacao') conteudo?.replaceChildren(criarPainelSincronizacaoWeb(estado, () => void mostrarSincronizacao()));
+  }
 }
 
 async function mostrarMaterialHtml(material: Material): Promise<void> {
@@ -1613,6 +1685,9 @@ function mostrarNota(
         estadoSalvo = estadoEnviado;
         textoSalvoAtual = textoEnviado;
         rotuloSalvo = `Salvo ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+        registrarUltimaGravacao(localStorage, {
+          em: Date.now(), resultado: 'salvo', caminho: notaAlvo.caminho,
+        });
         const textoAtual = editor === editorAlvo ? textoExato(editorAlvo.state) : null;
         if (textoAtual === textoEnviado) {
           apagarRascunho(localStorage, notaAlvo.caminho);
@@ -1624,6 +1699,10 @@ function mostrarNota(
         atualizarEstado();
         return true;
       } catch (erro) {
+        registrarUltimaGravacao(localStorage, {
+          em: Date.now(), resultado: 'falhou', caminho: notaAlvo.caminho,
+          mensagem: erroSeguro(erro),
+        });
         estado.textContent = 'Falhou ao salvar';
         estado.classList.add('alterado');
         if (erro instanceof ConflitoGitHub) mostrarConflito();
@@ -1898,6 +1977,8 @@ if (token) {
         ? 'materiais'
         : window.location.hash === '#triade'
           ? 'triade'
+          : window.location.hash === '#sincronizacao'
+            ? 'sincronizacao'
           : lerSecaoPreferida();
       if (secaoInicial && secaoInicial !== 'conhecimento') selecionarSecao(secaoInicial);
       void sincronizarPreferenciasDoVault();
