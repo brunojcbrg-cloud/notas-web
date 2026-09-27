@@ -16,6 +16,7 @@ import {
   validarCaminho,
   type NotaRemota,
 } from './github';
+import { startElapsedLoading } from './loading';
 import { BloqueioInatividade, conectarBloqueio } from './lock';
 import { criarLateral, type Lateral } from './lateral';
 import {
@@ -703,6 +704,9 @@ function mostrarEntrada(mensagem = ''): void {
     botao.disabled = true;
     botaoGoogle.disabled = true;
     botao.textContent = 'Verificando…';
+    const stopElapsed = startElapsedLoading((seconds) => {
+      botao.textContent = `Carregando notas — ${seconds} s`;
+    });
     status.hidden = true;
     try {
       await concluirEntrada(valor);
@@ -713,6 +717,8 @@ function mostrarEntrada(mensagem = ''): void {
       botao.disabled = false;
       botaoGoogle.disabled = !googleDisponivel();
       botao.textContent = 'Entrar';
+    } finally {
+      stopElapsed();
     }
   });
   painel.append(
@@ -740,7 +746,7 @@ async function abrirNota(
   if (!token) return mostrarEntrada();
   const abertura = ++sequenciaAbertura;
   pastaRetorno = retorno;
-  mostrarCarregando(caminho);
+  const stopElapsed = mostrarCarregando(caminho);
   try {
     const carregada = await lerNota(token, caminho);
     if (abertura !== sequenciaAbertura) return;
@@ -751,10 +757,12 @@ async function abrirNota(
   } catch (erro) {
     if (abertura !== sequenciaAbertura) return;
     mostrarLista(erroSeguro(erro));
+  } finally {
+    stopElapsed();
   }
 }
 
-function mostrarCarregando(caminho: string): void {
+function mostrarCarregando(caminho: string): () => void {
   limpar();
   montarCasca();
   telaAtual = 'carregando';
@@ -762,8 +770,12 @@ function mostrarCarregando(caminho: string): void {
   atualizarCabecalho(caminho);
   lateral?.selecionarNota(arvore.notas.some((item) => item.caminho === caminho) ? caminho : null);
   const carregando = elemento('section', 'estado-central');
-  carregando.append(elemento('div', 'spinner'), elemento('p', '', 'Abrindo nota…'));
+  const status = elemento('p', '', 'Abrindo nota…');
+  carregando.append(elemento('div', 'spinner'), status);
   conteudo?.append(carregando);
+  return startElapsedLoading((seconds) => {
+    status.textContent = `Abrindo nota — ${seconds} s`;
+  });
 }
 
 function itemDeNota(item: NotaArvore, mostrarCaminho: boolean): HTMLButtonElement {
