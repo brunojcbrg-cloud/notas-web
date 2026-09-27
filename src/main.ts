@@ -69,6 +69,12 @@ import {
   type TemaMarkdown,
 } from './themes';
 import {
+  CHAVE_LATERAL_TRIADE,
+  criarVisorTriade,
+  lerRegistroTriade,
+  type EstadoRegistroTriade,
+} from './triade';
+import {
   construirArvore,
   entradasDaPasta,
   filtrarNotas,
@@ -144,21 +150,24 @@ let casca: HTMLElement | null = null;
 let conteudo: HTMLElement | null = null;
 let lateral: Lateral | null = null;
 let lateralMateriais: Lateral | null = null;
+let lateralTriade: Lateral | null = null;
 let estadoMateriais: EstadoMateriais = { tipo: 'ausente', mensagem: 'Manifesto ainda não gerado. Rode o gerador no PC e sincronize o vault.' };
+let estadoTriade: EstadoRegistroTriade = { tipo: 'ausente', mensagem: 'Registro da tríade ainda não sincronizado.' };
 let arvoreMateriais: ArvoreNotas = construirArvoreMateriais([]);
 let materiaisPorCaminho = new Map<string, Material>();
 const CHAVE_SECAO_PREFERIDA = 'notas-web.secao-preferida';
+type SecaoApp = 'conhecimento' | 'materiais' | 'triade';
 
-function lerSecaoPreferida(): 'conhecimento' | 'materiais' | null {
+function lerSecaoPreferida(): SecaoApp | null {
   try {
     const valor = localStorage.getItem(CHAVE_SECAO_PREFERIDA);
-    return valor === 'materiais' || valor === 'conhecimento' ? valor : null;
+    return valor === 'materiais' || valor === 'conhecimento' || valor === 'triade' ? valor : null;
   } catch {
     return null;
   }
 }
 
-function guardarSecaoPreferida(secao: 'conhecimento' | 'materiais'): void {
+function guardarSecaoPreferida(secao: SecaoApp): void {
   try {
     localStorage.setItem(CHAVE_SECAO_PREFERIDA, secao);
   } catch {
@@ -166,14 +175,14 @@ function guardarSecaoPreferida(secao: 'conhecimento' | 'materiais'): void {
   }
 }
 
-let secaoAtual: 'conhecimento' | 'materiais' = 'conhecimento';
+let secaoAtual: SecaoApp = 'conhecimento';
 let materialHtmlAtual: Material | null = null;
 let pastaMaterialAtual = '';
-const rolagemLaterais = { conhecimento: 0, materiais: 0 };
+const rolagemLaterais: Record<SecaoApp, number> = { conhecimento: 0, materiais: 0, triade: 0 };
 let botaoLateral: HTMLButtonElement | null = null;
 let botaoVoltar: HTMLButtonElement | null = null;
 let subtituloCabecalho: HTMLElement | null = null;
-let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' | 'materiais' | 'material-html' = 'entrada';
+let telaAtual: 'entrada' | 'lista' | 'carregando' | 'nota' | 'materiais' | 'material-html' | 'triade' = 'entrada';
 let sequenciaAbertura = 0;
 
 let rascunhoMemoria: RascunhoPersistente | null = null;
@@ -224,9 +233,15 @@ function telaPequena(): boolean {
   return window.matchMedia('(max-width: 680px)').matches;
 }
 
+function lateralDaSecao(secao: SecaoApp): Lateral | null {
+  if (secao === 'materiais') return lateralMateriais;
+  if (secao === 'triade') return lateralTriade;
+  return lateral;
+}
+
 function sincronizarLateral(): void {
   if (!casca || !lateral || !botaoLateral) return;
-  const painel = secaoAtual === 'materiais' ? lateralMateriais : lateral;
+  const painel = lateralDaSecao(secaoAtual);
   if (!painel) return;
   const aberta = lateral.aberta();
   casca.classList.toggle('lateral-aberta', aberta);
@@ -241,11 +256,12 @@ function sincronizarLateral(): void {
 function definirLateralAberta(aberta: boolean): void {
   lateral?.definirAberta(aberta);
   lateralMateriais?.definirAberta(aberta);
+  lateralTriade?.definirAberta(aberta);
   sincronizarLateral();
 }
 
 function atualizarAbas(): void {
-  for (const aside of [lateral?.elemento, lateralMateriais?.elemento]) {
+  for (const aside of [lateral?.elemento, lateralMateriais?.elemento, lateralTriade?.elemento]) {
     aside?.querySelectorAll<HTMLButtonElement>('.aba-secao').forEach((botao) => {
       const ativa = botao.dataset.secao === secaoAtual;
       botao.classList.toggle('ativa', ativa);
@@ -255,11 +271,11 @@ function atualizarAbas(): void {
   }
 }
 
-function selecionarSecao(secao: 'conhecimento' | 'materiais'): void {
+function selecionarSecao(secao: SecaoApp): void {
   if (secao === secaoAtual) return;
   if (!confirmarDescarte()) return;
-  const anterior = secaoAtual === 'materiais' ? lateralMateriais : lateral;
-  const proximo = secao === 'materiais' ? lateralMateriais : lateral;
+  const anterior = lateralDaSecao(secaoAtual);
+  const proximo = lateralDaSecao(secao);
   if (!anterior || !proximo) return;
   rolagemLaterais[secaoAtual] = anterior.elemento.querySelector('.lateral-arvore')?.scrollTop ?? 0;
   secaoAtual = secao;
@@ -269,13 +285,18 @@ function selecionarSecao(secao: 'conhecimento' | 'materiais'): void {
   atualizarAbas();
   sincronizarLateral();
   if (secao === 'materiais') mostrarMateriais();
+  else if (secao === 'triade') mostrarTriade();
   else mostrarLista('', false);
 }
 
 function inserirAbas(painel: Lateral): void {
   const abas = elemento('nav', 'abas-secao');
   abas.setAttribute('aria-label', 'Áreas do app');
-  for (const [secao, nome] of [['conhecimento', 'Conhecimento'], ['materiais', 'Materiais']] as const) {
+  for (const [secao, nome] of [
+    ['conhecimento', 'Conhecimento'],
+    ['materiais', 'Materiais'],
+    ['triade', 'Tríade'],
+  ] as const) {
     const botao = elemento('button', 'aba-secao', nome);
     botao.type = 'button';
     botao.dataset.secao = secao;
@@ -417,6 +438,7 @@ function encerrarSessao(): void {
   treeSha = '';
   arvore = construirArvore([]);
   estadoMateriais = { tipo: 'ausente', mensagem: 'Manifesto ainda não gerado. Rode o gerador no PC e sincronize o vault.' };
+  estadoTriade = { tipo: 'ausente', mensagem: 'Registro da tríade ainda não sincronizado.' };
   arvoreMateriais = construirArvoreMateriais([]);
   materiaisPorCaminho = new Map();
   secaoAtual = 'conhecimento';
@@ -519,8 +541,31 @@ function montarCasca(): void {
     },
   );
   lateralMateriais.elemento.id = 'explorador-materiais';
+  lateralTriade = criarLateral(
+    construirArvore([]),
+    localStorage,
+    () => {},
+    () => {},
+    !telaPequena(),
+    undefined, undefined, undefined, undefined, undefined,
+    {
+      chaveEstado: CHAVE_LATERAL_TRIADE,
+      titulo: 'TRÍADE',
+      unidade: 'funções',
+      ariaLabel: 'Registro de funções da tríade',
+      simboloArquivo: '·',
+    },
+  );
+  lateralTriade.elemento.id = 'explorador-triade';
+  const totalTriade = estadoTriade.tipo === 'pronto' ? estadoTriade.registro.funcoes.length : 0;
+  const contagemTriade = lateralTriade.elemento.querySelector('.lateral-total');
+  if (contagemTriade) contagemTriade.textContent = `${totalTriade} funções`;
+  lateralTriade.elemento.querySelector('.lateral-arvore')?.append(
+    elemento('p', 'lateral-triade-ajuda', 'Um registro para conferir o que já chegou aos três clientes.'),
+  );
   inserirAbas(lateral);
   inserirAbas(lateralMateriais);
+  inserirAbas(lateralTriade);
   atualizarAbas();
   conteudo = elemento('main', 'app-conteudo');
   corpo.append(lateral.elemento, conteudo);
@@ -593,12 +638,17 @@ function iniciarBloqueio(): void {
 
 /** Carrega notas e materiais e entra na tela principal — comum ao token colado e ao passe do Google. */
 async function concluirEntrada(tokenGitHub: string): Promise<void> {
-  const [lista, materiais] = await Promise.all([listarNotasComSha(tokenGitHub), lerManifestoMateriais(tokenGitHub)]);
+  const [lista, materiais, triade] = await Promise.all([
+    listarNotasComSha(tokenGitHub),
+    lerManifestoMateriais(tokenGitHub),
+    lerRegistroTriade(tokenGitHub),
+  ]);
   caminhos = lista.caminhos;
   blobs = lista.blobs;
   treeSha = lista.treeSha;
   arvore = construirArvore(caminhos, [...pastasPendentes]);
   estadoMateriais = materiais;
+  estadoTriade = triade;
   arvoreMateriais = construirArvoreMateriais(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos : []);
   materiaisPorCaminho = new Map(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos.map((item) => [item.caminho, item]) : []);
   guardarToken(sessionStorage, tokenGitHub);
@@ -607,8 +657,12 @@ async function concluirEntrada(tokenGitHub: string): Promise<void> {
   mostrarLista();
   // #materiais leva direto aos materiais depois do login (atalho de tela
   // inicial); sem o atalho, cai na última seção usada nesta máquina.
-  const secaoInicial = window.location.hash === '#materiais' ? 'materiais' : lerSecaoPreferida();
-  if (secaoInicial === 'materiais') selecionarSecao('materiais');
+  const secaoInicial = window.location.hash === '#materiais'
+    ? 'materiais'
+    : window.location.hash === '#triade'
+      ? 'triade'
+      : lerSecaoPreferida();
+  if (secaoInicial && secaoInicial !== 'conhecimento') selecionarSecao(secaoInicial);
   void sincronizarPreferenciasDoVault();
   const rascunho = rascunhoMemoria ?? listarRascunhos(localStorage)[0] ?? null;
   if (rascunho) oferecerRascunho(rascunho);
@@ -624,6 +678,7 @@ function mostrarEntrada(mensagem = ''): void {
   botaoVoltar = null;
   subtituloCabecalho = null;
   lateralMateriais = null;
+  lateralTriade = null;
   telaAtual = 'entrada';
   const pagina = elemento('main', 'entrada');
   const painel = elemento('section', 'entrada-painel');
@@ -999,6 +1054,18 @@ function mostrarMateriais(): void {
   }
   corpo.append(lista);
   conteudo?.append(corpo);
+}
+
+function mostrarTriade(): void {
+  limpar();
+  montarCasca();
+  telaAtual = 'triade';
+  nota = null;
+  casca?.classList.remove('nota-ativa');
+  const total = estadoTriade.tipo === 'pronto' ? estadoTriade.registro.funcoes.length : 0;
+  atualizarCabecalho(`${total} funções na tríade`);
+  lateral?.selecionarNota(null);
+  conteudo?.append(criarVisorTriade(estadoTriade));
 }
 
 async function mostrarMaterialHtml(material: Material): Promise<void> {
@@ -1814,18 +1881,25 @@ window.addEventListener('pagehide', () => {
 if (token) {
   iniciarBloqueio();
   mostrarCarregando('Carregando lista…');
-  Promise.all([listarNotasComSha(token), lerManifestoMateriais(token)])
-    .then(([resultado, materiais]) => {
+  Promise.all([listarNotasComSha(token), lerManifestoMateriais(token), lerRegistroTriade(token)])
+    .then(([resultado, materiais, triade]) => {
       caminhos = resultado.caminhos;
       blobs = resultado.blobs;
       treeSha = resultado.treeSha;
       arvore = construirArvore(caminhos, [...pastasPendentes]);
       estadoMateriais = materiais;
+      estadoTriade = triade;
       arvoreMateriais = construirArvoreMateriais(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos : []);
       materiaisPorCaminho = new Map(materiais.tipo === 'pronto' ? materiais.manifesto.arquivos.map((item) => [item.caminho, item]) : []);
       lateral?.atualizarArvore(arvore);
       lateralMateriais?.atualizarArvore(arvoreMateriais);
       mostrarLista();
+      const secaoInicial = window.location.hash === '#materiais'
+        ? 'materiais'
+        : window.location.hash === '#triade'
+          ? 'triade'
+          : lerSecaoPreferida();
+      if (secaoInicial && secaoInicial !== 'conhecimento') selecionarSecao(secaoInicial);
       void sincronizarPreferenciasDoVault();
       const rascunho = listarRascunhos(localStorage)[0] ?? null;
       if (rascunho) oferecerRascunho(rascunho);

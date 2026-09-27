@@ -122,7 +122,7 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .botao-voltar { flex: none; white-space: nowrap; }
 .botao-voltar[hidden], .lateral[hidden], .lateral-fundo[hidden] { display: none; }
 .lateral { width: 280px; min-width: 280px; min-height: 0; display: flex; flex-direction: column; background: var(--papel); border-right: 1px solid var(--linha); }
-.abas-secao { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 10px 8px 8px; border-bottom: 1px solid var(--linha); }
+.abas-secao { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 10px 8px 8px; border-bottom: 1px solid var(--linha); }
 .aba-secao { min-width: 0; min-height: 34px; padding: 6px 4px; color: var(--grafite-2); background: var(--transparente); border: 0; border-radius: 5px; font-size: 12px; font-weight: 650; cursor: pointer; }
 .aba-secao:hover { color: var(--grafite); background: var(--fundo-hover-sutil); }
 .aba-secao.ativa { color: var(--tinta); background: color-mix(in srgb, var(--papel) 86%, var(--tinta) 14%); }
@@ -169,6 +169,55 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .lista-notas { overflow: hidden; background: var(--folha); border-radius: 10px; box-shadow: 0 0 0 1px var(--linha); }
 .materiais-resumo { margin: -10px 0 24px; color: var(--grafite-2); font-size: 13px; }
 .materiais-estado { margin-bottom: 22px; color: var(--ambar); }
+.lateral-triade-ajuda { margin: 8px 10px; color: var(--grafite-3); font-size: 11px; line-height: 1.5; text-wrap: pretty; }
+
+/* Registro da tríade: matriz operacional dentro da linguagem de papel do app. */
+.triade-corpo { width: min(100% - 32px, 1120px); margin: 0 auto; padding: clamp(34px, 6vw, 72px) 0 100px; }
+.triade-topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; margin-bottom: 24px; }
+.triade-topo h1 { max-width: 720px; margin-bottom: 10px; }
+.triade-intro { max-width: 680px; margin: 0; color: var(--grafite-2); line-height: 1.55; text-wrap: pretty; }
+.triade-atualizacao { min-width: 190px; margin: 4px 0 0; color: var(--grafite-3); font-family: Consolas, monospace; font-size: 11px; line-height: 1.65; text-align: right; white-space: pre-line; font-variant-numeric: tabular-nums; }
+.triade-resumo { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.triade-metrica { min-height: 88px; padding: 14px 16px; color: var(--grafite-2); background: var(--folha); border: 1px solid var(--linha); border-radius: 9px; font-size: 12px; font-weight: 650; line-height: 1.45; text-align: left; white-space: pre-line; cursor: pointer; transition: border-color 140ms, background-color 140ms, transform 120ms; }
+.triade-metrica::first-line { color: var(--grafite-2); }
+.triade-metrica:hover, .triade-metrica.ativa { background: color-mix(in srgb, var(--folha) 88%, var(--tinta) 12%); border-color: var(--tinta); }
+.triade-metrica:active { transform: scale(0.98); }
+.triade-filtros { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; padding: 4px; background: var(--folha-baixa); border-radius: 8px; }
+.triade-filtro { min-height: 34px; padding: 6px 10px; color: var(--grafite-2); background: var(--transparente); border: 0; border-radius: 5px; font-size: 11.5px; font-weight: 650; cursor: pointer; }
+.triade-filtro:hover, .triade-filtro.ativa { color: var(--grafite); background: var(--folha); }
+.triade-pendentes { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; margin-left: 8px; cursor: pointer; }
+.triade-contagem { margin-left: auto; padding-right: 8px; color: var(--grafite-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.triade-tabela { overflow-x: auto; background: var(--folha); border-radius: 10px; box-shadow: 0 0 0 1px var(--linha); }
+.triade-registro { min-width: 760px; border-bottom: 1px solid var(--linha); }
+.triade-registro:last-child { border-bottom: 0; }
+.triade-linha { min-width: 760px; min-height: 58px; display: grid; grid-template-columns: minmax(270px, 1.55fr) repeat(3, minmax(145px, 1fr)); align-items: stretch; }
+.triade-linha > * { min-width: 0; padding: 11px 13px; }
+.triade-linha > * + * { border-left: 1px solid var(--linha); }
+.triade-titulos { min-height: 34px; color: var(--grafite-3); background: var(--folha-baixa); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.triade-titulos > * { padding-top: 9px; padding-bottom: 8px; }
+.triade-registro summary { list-style: none; cursor: pointer; }
+.triade-registro summary::-webkit-details-marker { display: none; }
+.triade-registro summary:hover { background: color-mix(in srgb, var(--folha) 90%, var(--tinta) 10%); }
+.triade-funcao { display: flex; align-items: center; gap: 8px; color: var(--grafite); font-size: 12.5px; font-weight: 650; }
+.triade-funcao::before { content: '›'; color: var(--grafite-3); font-size: 18px; line-height: 1; transition: transform 140ms; }
+.triade-registro[open] .triade-funcao::before { transform: rotate(90deg); }
+.triade-celula { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 5px; }
+.triade-celula small { max-width: 100%; overflow: hidden; color: var(--grafite-3); font-family: Consolas, monospace; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.triade-estado { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; }
+.triade-estado::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 13%, var(--transparente)); }
+.triade-estado.feito { color: var(--salvo); }
+.triade-estado.parcial { color: var(--ambar); }
+.triade-estado.pendente { color: var(--perigo); }
+.triade-estado.nao_verificado { color: var(--tinta); }
+.triade-estado.nao_se_aplica { color: var(--grafite-3); }
+.triade-detalhe { padding: 18px; background: color-mix(in srgb, var(--folha) 72%, var(--papel)); border-top: 1px solid var(--linha); }
+.triade-detalhe > p { max-width: 780px; margin-bottom: 10px; color: var(--grafite-2); font-size: 12px; line-height: 1.5; }
+.triade-origem { color: var(--grafite-3) !important; font-family: Consolas, monospace; font-size: 10.5px !important; overflow-wrap: anywhere; }
+.triade-clientes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.triade-clientes section { padding: 11px 12px; background: var(--folha); border-radius: 7px; box-shadow: 0 0 0 1px var(--linha); }
+.triade-clientes h2 { margin: 0 0 7px; font-family: inherit; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.triade-clientes p { margin: 4px 0; color: var(--grafite-2); font-size: 10.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.triade-mensagem { max-width: 640px; color: var(--ambar); }
 .item-material { min-height: 74px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--linha); }
 .item-material:last-child { border-bottom: 0; }
 .material-identificacao { min-width: 0; display: flex; align-items: start; gap: 12px; }
@@ -303,6 +352,13 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
   .lista-topo .botao { width: 100%; }
   .item-material { align-items: stretch; flex-direction: column; }
   .material-acoes .botao { flex: 1; text-align: center; }
+  .triade-topo { display: block; }
+  .triade-atualizacao { margin-top: 14px; text-align: left; }
+  .triade-resumo { grid-template-columns: 1fr; }
+  .triade-filtros { align-items: flex-start; flex-wrap: wrap; }
+  .triade-pendentes { margin-left: 0; }
+  .triade-contagem { width: 100%; margin: 0; padding: 4px 6px; }
+  .triade-clientes { grid-template-columns: 1fr; }
   .barra-nota { align-items: stretch; flex-direction: column; padding-block: 10px; }
   .acoes-nota { justify-content: space-between; }
   .leitura-markdown { padding: 28px 20px 100px; }
