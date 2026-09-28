@@ -34,6 +34,7 @@ def certificar(navegador, url: str) -> bool:
         erros: list[str] = []
         downloads: list[str] = []
         pagina.on("pageerror", lambda erro: erros.append(str(erro)))
+        pagina.add_init_script("sessionStorage.setItem('notas-web.google-token', 'google-falso-producao')")
 
         def github(rota) -> None:
             caminho = rota.request.url
@@ -63,8 +64,25 @@ def certificar(navegador, url: str) -> bool:
             else:
                 rota.fulfill(status=200, content_type="text/html", body="<title>Visualizador falso do Drive</title>")
 
+        def drive_api(rota) -> None:
+            if "?q=" in rota.request.url:
+                rota.fulfill(status=200, content_type="application/json",
+                             body=json.dumps({"files": [{"id": "estado-aulas-1", "name": "estado_aulas.json"}]}))
+            else:
+                rota.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "schema": 2,
+                    "atualizado_em": "2026-09-27T23:20:00-03:00",
+                    "aulas": [
+                        {"id_aula": "a", "nome_final": "Genética molecular", "materia": "Genética",
+                         "status": "produzindo", "etapa": "design", "progresso": 86},
+                        {"id_aula": "b", "nome_final": "Parasitologia", "materia": "Parasitologia",
+                         "status": "na_fila", "posicao": 2},
+                    ],
+                }))
+
         pagina.route("https://api.github.com/**", github)
         contexto.route("https://drive.google.com/**", drive)
+        pagina.route("https://www.googleapis.com/drive/v3/**", drive_api)
         pagina.goto(url, wait_until="networkidle")
         pagina.locator("#token").fill("github_pat_FALSO_MATERIAIS")
         pagina.get_by_role("button", name="Entrar", exact=True).click()
@@ -80,6 +98,12 @@ def certificar(navegador, url: str) -> bool:
                  and pagina.locator('.lateral-pasta[data-caminho="Matéria/Aula 01"]').count() == 1
                  and "374 materiais" in pagina.locator(".materiais-resumo").inner_text(),
                  f"{pagina.locator('.lateral-nota').count()} arquivos")
+        painel = pagina.locator('.aulas-producao')
+        painel.get_by_text('Produzindo · design · 86%').wait_for(state='visible')
+        verificar(242, "painel Aulas em produção lê estado v2 no Drive falso",
+                 'Genética molecular' in painel.inner_text()
+                 and 'posição 2' in painel.inner_text()
+                 and not erros)
         pagina.locator(".item-pasta").first.click()
         pagina.locator(".item-pasta").first.click()
         pequeno_linha = pagina.locator('.item-material[data-caminho="Matéria/Aula 01/Apostila pequena.pdf"]')

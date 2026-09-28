@@ -179,6 +179,17 @@ label { color: var(--grafite-2); font-size: 13px; font-weight: 600; }
 .lista-notas { overflow: hidden; background: var(--folha); border-radius: 10px; box-shadow: 0 0 0 1px var(--linha); }
 .materiais-resumo { margin: -10px 0 24px; color: var(--grafite-2); font-size: 13px; }
 .materiais-estado { margin-bottom: 22px; color: var(--ambar); }
+.aulas-producao { margin: 0 0 24px; padding: 18px; background: var(--folha); border: 1px solid var(--linha); border-radius: 10px; }
+.aulas-producao h2 { margin: 0 0 14px; font-size: 20px; }
+.aulas-producao .materiais-estado { margin-bottom: 0; }
+.aulas-producao-lista { display: grid; gap: 8px; }
+.aula-producao { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 12px; background: var(--folha-baixa); border-radius: 7px; }
+.aula-producao-descricao { min-width: 0; display: grid; gap: 3px; }
+.aula-producao-descricao strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aula-producao-descricao span { color: var(--grafite-3); font-size: 12px; }
+.aula-producao-estado { color: var(--tinta); font-size: 12px; font-weight: 700; text-align: right; }
+.aula-falhou .aula-producao-estado { color: var(--perigo); }
+.aula-pronta .aula-producao-estado, .aula-concluida .aula-producao-estado { color: var(--salvo); }
 .lateral-triade-ajuda { margin: 8px 10px; color: var(--grafite-3); font-size: 11px; line-height: 1.5; text-wrap: pretty; }
 
 /* Registro da tríade: matriz operacional dentro da linguagem de papel do app. */

@@ -49,6 +49,7 @@ import { guardarToken, guardarTokenGoogle, lerToken, lerTokenGoogle, sair } from
 import { definirSessao, redefinirSessaoPadrao } from './sessao';
 import { ErroLoginGoogle, googleDisponivel, localizarESolicitarPasse, solicitarTokenGoogle } from './google';
 import { validarPasse } from './passe';
+import { lerEstadoAulas, textoEstadoAula } from './aulasProducao';
 import { guardarPreferenciasRemotas, lerPreferenciasRemotas } from './preferencias';
 import {
   AgendadorAutosave,
@@ -1003,6 +1004,49 @@ function mostrarMateriais(): void {
   voltar.addEventListener('click', () => selecionarSecao('conhecimento'));
   topo.append(titulos, voltar);
   corpo.append(topo);
+
+  const producao = elemento('section', 'aulas-producao');
+  producao.append(
+    elemento('p', 'sobretitulo', 'LIFE SO · AULAS DO CELULAR'),
+    elemento('h2', '', 'Aulas em produção'),
+  );
+  const conteudoProducao = elemento('div', 'aulas-producao-conteudo');
+  producao.append(conteudoProducao);
+  corpo.append(producao);
+  if (!tokenGoogle) {
+    conteudoProducao.append(elemento('p', 'mensagem materiais-estado', 'Entre com o Google para acompanhar o estado salvo no Drive.'));
+  } else {
+    conteudoProducao.append(elemento('p', 'mensagem', 'Consultando o Drive…'));
+    void lerEstadoAulas(tokenGoogle)
+      .then((estado) => {
+        if (telaAtual !== 'materiais') return;
+        const visiveis = estado.aulas
+          .filter((aula) => !['enviada'].includes(aula.status))
+          .sort((a, b) => (a.posicao ?? 999) - (b.posicao ?? 999));
+        if (visiveis.length === 0) {
+          conteudoProducao.replaceChildren(elemento('p', 'mensagem', 'Nenhuma aula em produção agora.'));
+          return;
+        }
+        const listaEstado = elemento('div', 'aulas-producao-lista');
+        for (const aula of visiveis) {
+          const linha = elemento('div', `aula-producao aula-${aula.status}`);
+          const descricao = elemento('div', 'aula-producao-descricao');
+          descricao.append(
+            elemento('strong', '', aula.nome_final),
+            elemento('span', '', aula.materia || 'Matéria não informada'),
+          );
+          const estadoTexto = elemento('span', 'aula-producao-estado', textoEstadoAula(aula));
+          linha.append(descricao, estadoTexto);
+          listaEstado.append(linha);
+        }
+        conteudoProducao.replaceChildren(listaEstado);
+      })
+      .catch(() => {
+        if (telaAtual === 'materiais') {
+          conteudoProducao.replaceChildren(elemento('p', 'mensagem materiais-estado', 'Não foi possível ler o estado das aulas no Drive agora.'));
+        }
+      });
+  }
 
   if (estadoMateriais.tipo !== 'pronto') {
     corpo.append(elemento('p', 'mensagem materiais-estado', estadoMateriais.mensagem));
